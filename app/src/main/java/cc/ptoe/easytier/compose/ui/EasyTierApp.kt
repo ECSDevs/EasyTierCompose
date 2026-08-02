@@ -76,6 +76,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -92,7 +93,6 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -121,6 +121,9 @@ fun EasyTierApp(
     val snackbar = remember { SnackbarHostState() }
     var destination by remember { mutableStateOf(Destination.Dashboard) }
     val wide = LocalConfiguration.current.screenWidthDp >= 840
+    val draftRunning = state.draft?.let { draft ->
+        state.runtime.profileId == draft.id && state.runtime.state in setOf(RuntimeState.STARTING, RuntimeState.RUNNING)
+    } ?: false
 
     LaunchedEffect(viewModel) {
         viewModel.effects.collect { effect ->
@@ -128,10 +131,39 @@ fun EasyTierApp(
         }
     }
     LaunchedEffect(state.runtime.error) { state.runtime.error?.let { snackbar.showSnackbar(it) } }
+    LaunchedEffect(state.draft) {
+        if (state.draft == null && destination == Destination.Editor) destination = Destination.Profiles
+    }
 
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
         snackbarHost = { SnackbarHost(snackbar) },
+        topBar = {
+            TopAppBar(
+                title = { Text(destination.label) },
+                navigationIcon = {
+                    if (destination == Destination.Editor) {
+                        IconButton(onClick = {
+                            viewModel.discardDraft()
+                            destination = Destination.Profiles
+                        }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    }
+                },
+                actions = {
+                    if (destination == Destination.Editor) {
+                        IconButton(
+                            onClick = viewModel::saveDraft,
+                            enabled = !draftRunning,
+                            modifier = Modifier.semantics { contentDescription = "save_profile" },
+                        ) {
+                            Icon(Icons.Default.Check, contentDescription = "Save")
+                        }
+                    }
+                },
+            )
+        },
         bottomBar = {
             if (!wide && destination != Destination.Editor) {
                 AppNavigationBar(destination) { destination = it }
@@ -149,10 +181,6 @@ fun EasyTierApp(
                         state = state,
                         connect = viewModel::connect,
                         disconnect = viewModel::disconnect,
-                        onEdit = {
-                            state.profiles.firstOrNull { it.id == state.selectedProfileId }?.let(viewModel::beginEdit)
-                            destination = Destination.Editor
-                        },
                         onCreate = { viewModel.beginCreate(); destination = Destination.Editor },
                     )
                     Destination.Profiles -> ProfilesScreen(
@@ -165,10 +193,9 @@ fun EasyTierApp(
                         ProfileEditorScreen(
                             profile = draft,
                             errors = state.fieldErrors,
-                            running = state.runtime.profileId == draft.id && state.runtime.state in setOf(RuntimeState.STARTING, RuntimeState.RUNNING),
+                            running = draftRunning,
                             update = viewModel::updateDraft,
                             save = viewModel::saveDraft,
-                            cancel = { viewModel.discardDraft(); destination = Destination.Profiles },
                         )
                     }
                     Destination.Settings -> SettingsScreen(
@@ -216,7 +243,6 @@ private fun DashboardScreen(
     state: EasyTierUiState,
     connect: () -> Unit,
     disconnect: () -> Unit,
-    onEdit: () -> Unit,
     onCreate: () -> Unit,
 ) {
     val profile = state.profiles.firstOrNull { it.id == state.selectedProfileId }
@@ -232,7 +258,7 @@ private fun DashboardScreen(
         item {
             StatusCard(
                 runtime = state.runtime,
-                profileId = profile?.id,
+                profileName = profile?.name,
                 active = active,
                 hasProfile = profile != null,
                 onClick = cardClick,
@@ -249,26 +275,13 @@ private fun DashboardScreen(
                 error = state.runtime.error,
             )
         }
-
-        if (profile != null) {
-            item {
-                OutlinedButton(
-                    onClick = onEdit,
-                    shape = MaterialTheme.shapes.medium,
-                ) {
-                    Icon(Icons.Default.Tune, contentDescription = null, Modifier.size(18.dp))
-                    Spacer(Modifier.size(8.dp))
-                    Text("View Configuration")
-                }
-            }
-        }
     }
 }
 
 @Composable
 private fun StatusCard(
     runtime: RuntimeStatus,
-    profileId: String?,
+    profileName: String?,
     active: Boolean,
     hasProfile: Boolean,
     onClick: () -> Unit,
@@ -346,7 +359,7 @@ private fun StatusCard(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
-                    text = profileId ?: "No profile selected",
+                    text = profileName ?: "No profile selected",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
@@ -448,9 +461,6 @@ private fun ProfilesScreen(
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            item {
-                Text("Profiles", style = MaterialTheme.typography.displaySmall)
-            }
             items(state.profiles, key = { it.id }) { profile ->
                 val isSelected = profile.id == state.selectedProfileId
                 OutlinedCard(
@@ -529,26 +539,11 @@ private fun ProfileEditorScreen(
     running: Boolean,
     update: ((EasyTierProfile) -> EasyTierProfile) -> Unit,
     save: () -> Unit,
-    cancel: () -> Unit,
 ) {
     var revealSecret by remember { mutableStateOf(false) }
     val advanced = !profile.advancedToml.isNullOrBlank()
 
     LazyColumn(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                IconButton(onClick = cancel) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                }
-                Text(
-                    text = "Edit Profile",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-            }
-        }
-
         if (running) {
             item {
                 Card(
@@ -591,8 +586,8 @@ private fun ProfileEditorScreen(
         // Section 2: Peers & Network
         item {
             SectionCard(title = "Network & Peers", icon = Icons.Default.Router) {
-                ListField("Peer URLs", profile.peerUrls, errors["peerUrls"], !advanced, "No peers configured") { value -> update { it.copy(peerUrls = value) } }
-                ListField("Listeners", profile.listeners, errors["listeners"], !advanced, "No listeners configured") { value -> update { it.copy(listeners = value) } }
+                ListField("Peer URLs", profile.peerUrls, errors["peerUrls"], !advanced) { value -> update { it.copy(peerUrls = value) } }
+                ListField("Listeners", profile.listeners, errors["listeners"], !advanced) { value -> update { it.copy(listeners = value) } }
                 if (!profile.dhcp) {
                     FormField("Static IPv4 CIDR", profile.virtualIpv4.orEmpty(), errors["virtualIpv4"], !advanced) { value -> update { it.copy(virtualIpv4 = value) } }
                 }
@@ -603,8 +598,8 @@ private fun ProfileEditorScreen(
         // Section 3: Routing & Advanced
         item {
             SectionCard(title = "Routing & Advanced", icon = Icons.Default.Tune) {
-                ListField("Proxy CIDRs", profile.proxyCidrs, errors["proxyCidrs"], !advanced, "No proxy CIDRs") { value -> update { it.copy(proxyCidrs = value) } }
-                ListField("Manual routes", profile.manualRoutes, errors["manualRoutes"], !advanced, "No manual routes") { value -> update { it.copy(manualRoutes = value) } }
+                ListField("Proxy CIDRs", profile.proxyCidrs, errors["proxyCidrs"], !advanced) { value -> update { it.copy(proxyCidrs = value) } }
+                ListField("Manual routes", profile.manualRoutes, errors["manualRoutes"], !advanced) { value -> update { it.copy(manualRoutes = value) } }
                 SwitchRow("Magic DNS", profile.enableMagicDns, !advanced && profile.tunMode == TunMode.VPN_SERVICE) { checked -> update { it.copy(enableMagicDns = checked) } }
                 if (profile.tunMode == TunMode.ROOT_TUN) {
                     Text("Magic DNS requires VPN Service mode", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -624,19 +619,6 @@ private fun ProfileEditorScreen(
         item {
             errors["form"]?.let {
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(
-                    enabled = !running,
-                    onClick = save,
-                    modifier = Modifier.semantics { contentDescription = "save_profile" },
-                    shape = MaterialTheme.shapes.medium,
-                ) {
-                    Text("Save Profile")
-                }
-                OutlinedButton(onClick = cancel, shape = MaterialTheme.shapes.medium) {
-                    Text("Cancel")
-                }
             }
         }
     }
@@ -697,31 +679,35 @@ private fun ListField(
     items: List<String>,
     error: String?,
     enabled: Boolean = true,
-    placeholder: String = "No entries",
     onChange: (List<String>) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
-    val supportingText = when {
-        error != null -> error
-        items.isEmpty() -> placeholder
-        else -> "${items.size} ${if (items.size == 1) "entry" else "entries"}"
+    val fieldValue = when {
+        items.isEmpty() -> ""
+        items.size == 1 -> items.first()
+        else -> "${items.size} entries"
     }
-    OutlinedTextField(
-        value = items.joinToString(", "),
-        onValueChange = {},
-        enabled = enabled,
-        readOnly = true,
-        label = { Text(label) },
-        supportingText = { Text(supportingText) },
-        isError = error != null,
-        trailingIcon = {
-            IconButton(onClick = { if (enabled) open = true }, enabled = enabled) {
+    Box(Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = fieldValue,
+            onValueChange = {},
+            enabled = enabled,
+            readOnly = true,
+            label = { Text(label) },
+            supportingText = if (error == null) null else { { Text(error) } },
+            isError = error != null,
+            trailingIcon = {
                 Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Edit $label")
-            }
-        },
-        shape = MaterialTheme.shapes.medium,
-        modifier = Modifier.fillMaxWidth(),
-    )
+            },
+            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .clickable(enabled = enabled) { open = true },
+        )
+    }
     if (open) {
         ListEditorDialog(
             title = label,
@@ -869,14 +855,6 @@ private fun SettingsScreen(
     var confirmReset by remember { mutableStateOf(false) }
 
     LazyColumn(verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        item {
-            Text(
-                text = "Settings",
-                style = MaterialTheme.typography.displaySmall,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-        }
-
         item {
             SettingsGroup {
                 SettingsItem(

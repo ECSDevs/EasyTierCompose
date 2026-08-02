@@ -9,40 +9,46 @@ enum class TunMode {
 }
 
 @Serializable
-data class EasyTierProfile(
-    val id: String,
-    val name: String,
-    val networkName: String,
-    val networkSecret: String,
-    val peerUrls: List<String>,
-    val listeners: List<String>,
-    val virtualIpv4: String?,
-    val dhcp: Boolean,
-    val proxyCidrs: List<String>,
-    val manualRoutes: List<String>,
-    val enableMagicDns: Boolean,
-    val mtu: Int,
-    val tunMode: TunMode,
-    val advancedToml: String?,
+enum class CompressionAlgo {
+    None,
+    Zstd,
+}
+
+@Serializable
+enum class EncryptionAlgorithm {
+    Xor,
+    AesGcm,
+    Aes256Gcm,
+    ChaCha20,
+}
+
+@Serializable
+data class Peer(
+    val uri: String,
+    val peerPublicKey: String? = null,
 )
 
-enum class RuntimeState {
-    STOPPED,
-    STARTING,
-    RUNNING,
-    STOPPING,
-    ERROR,
-}
+@Serializable
+data class ProxyNetwork(
+    val cidr: String,
+    val mappedCidr: String? = null,
+    val allow: List<String> = emptyList(),
+)
 
-data class RuntimeStatus(
-    val state: RuntimeState,
-    val profileId: String?,
-    val tunMode: TunMode?,
-    val virtualIpv4: String?,
-    val tunDevice: String?,
-    val error: String?,
-) {
-    companion object {
-        val Stopped = RuntimeStatus(RuntimeState.STOPPED, null, null, null, null, null)
-    }
-}
+@Serializable
+data class PortForward(
+    val bindAddr: String,
+    val dstAddr: String,
+    val proto: String,
+)
+
+@Serializable
+data class VpnPortal(
+    val clientCidr: String,
+    val wireguardListen: String,
+)
+
+@Serializable
+data class SecureMode(
+    val enabled: Boolean = false,
+    val
