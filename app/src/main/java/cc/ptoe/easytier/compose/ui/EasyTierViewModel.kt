@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import cc.ptoe.easytier.compose.core.EasyTierRuntimeCoordinator
 import cc.ptoe.easytier.compose.core.ProfileValidator
 import cc.ptoe.easytier.compose.data.EasyTierProfile
+import cc.ptoe.easytier.compose.data.GlobalSettings
+import cc.ptoe.easytier.compose.data.GlobalSettingsRepository
 import cc.ptoe.easytier.compose.data.ProfileRepository
 import cc.ptoe.easytier.compose.data.RuntimeState
 import cc.ptoe.easytier.compose.data.RuntimeStatus
@@ -24,15 +26,18 @@ data class EasyTierUiState(
     val draft: EasyTierProfile? = null,
     val runtime: RuntimeStatus = RuntimeStatus.Stopped,
     val fieldErrors: Map<String, String> = emptyMap(),
+    val globalSettings: GlobalSettings = GlobalSettings(),
 )
 
 class EasyTierViewModel(
     private val repository: ProfileRepository,
     private val coordinator: EasyTierRuntimeCoordinator,
+    private val globalSettingsRepository: GlobalSettingsRepository,
 ) : ViewModel() {
     private val selectedId = MutableStateFlow<String?>(null)
     private val draft = MutableStateFlow<EasyTierProfile?>(null)
     private val errors = MutableStateFlow<Map<String, String>>(emptyMap())
+    private val globalSettings = MutableStateFlow(GlobalSettings())
     val effects = MutableSharedFlow<RuntimeEffect>()
 
     val state: StateFlow<EasyTierUiState> = combine(
@@ -50,10 +55,15 @@ class EasyTierViewModel(
         val editing = values[3] as EasyTierProfile?
         val runtime = values[4] as RuntimeStatus
         val fieldErrors = values[5] as Map<String, String>
-        EasyTierUiState(profiles, localSelection ?: persistedSelection ?: profiles.firstOrNull()?.id, editing, runtime, fieldErrors)
+        EasyTierUiState(profiles, localSelection ?: persistedSelection ?: profiles.firstOrNull()?.id, editing, runtime, fieldErrors, globalSettings.value)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), EasyTierUiState())
 
-    init { viewModelScope.launch { coordinator.effects.collect { effects.emit(it) } } }
+    init {
+        viewModelScope.launch { coordinator.effects.collect { effects.emit(it) } }
+        viewModelScope.launch {
+            globalSettingsRepository.settings.collect { globalSettings.value = it }
+        }
+    }
 
     fun selectProfile(id: String?) = viewModelScope.launch { selectedId.value = id; repository.select(id) }
     fun beginCreate() { draft.value = repository.newProfile(); errors.value = emptyMap() }
@@ -67,7 +77,7 @@ class EasyTierViewModel(
             errors.value = mapOf("form" to "Disconnect before saving this profile")
             return@launch
         }
-        val validation = ProfileValidator().validate(value)
+        val validation = ProfileValidator().validate(value, globalSettings.value)
         if (validation.isNotEmpty()) { errors.value = validation; return@launch }
         repository.save(value)
         selectedId.value = value.id
@@ -89,7 +99,11 @@ class EasyTierViewModel(
         draft.value = draft.value?.takeIf { it.id == updated.id }?.copy(tunMode = mode, enableMagicDns = updated.enableMagicDns)
     }
 
-    fun connect() = viewModelScope.launch { selectedProfile()?.let { coordinator.start(it) } }
+    fun updateGlobalSettings(settings: GlobalSettings) = viewModelScope.launch {
+        globalSettingsRepository.update(settings)
+    }
+
+    fun connect() = viewModelScope.launch { selectedProfile()?.let { coordinator.start(it, globalSettings.value) } }
     fun disconnect() = viewModelScope.launch { coordinator.stop() }
     fun onVpnPermissionResult(granted: Boolean) = viewModelScope.launch { coordinator.onVpnPermissionResult(granted) }
     fun resetProfiles() = viewModelScope.launch { coordinator.stop(); repository.reset(); selectedId.value = null }

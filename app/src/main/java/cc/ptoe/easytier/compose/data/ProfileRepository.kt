@@ -3,6 +3,7 @@ package cc.ptoe.easytier.compose.data
 import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -11,6 +12,7 @@ import kotlinx.serialization.json.Json
 import java.util.UUID
 
 private val Context.easyTierProfilesDataStore by preferencesDataStore(name = "easytier_profiles")
+private val Context.easyTierGlobalSettingsDataStore by preferencesDataStore(name = "easytier_global_settings")
 
 class ProfileRepository(private val context: Context) {
     private val profilesKey = stringPreferencesKey("profiles_v1")
@@ -37,16 +39,11 @@ class ProfileRepository(private val context: Context) {
         name = "",
         networkName = "",
         networkSecret = "",
-        peerUrls = emptyList(),
-        listeners = emptyList(),
         virtualIpv4 = null,
         dhcp = false,
-        proxyCidrs = emptyList(),
-        manualRoutes = emptyList(),
         enableMagicDns = false,
         mtu = 1380,
         tunMode = TunMode.VPN_SERVICE,
-        advancedToml = null,
     )
 
     suspend fun save(profile: EasyTierProfile) {
@@ -82,4 +79,30 @@ class ProfileRepository(private val context: Context) {
     private fun decodeProfiles(raw: String?): List<EasyTierProfile> = raw?.let {
         runCatching { json.decodeFromString(ListSerializer(EasyTierProfile.serializer()), it) }.getOrDefault(emptyList())
     } ?: emptyList()
+}
+
+class GlobalSettingsRepository(private val context: Context) {
+    private val tunDeviceNameKey = stringPreferencesKey("tun_device_name")
+    private val noTunKey = booleanPreferencesKey("no_tun")
+    private val socks5ProxyKey = stringPreferencesKey("socks5_proxy")
+
+    val settings: Flow<GlobalSettings> = context.easyTierGlobalSettingsDataStore.data.map { preferences ->
+        GlobalSettings(
+            tunDeviceName = preferences[tunDeviceNameKey] ?: "easytier0",
+            noTun = preferences[noTunKey] ?: false,
+            socks5Proxy = preferences[socks5ProxyKey]?.takeIf { it.isNotEmpty() },
+        )
+    }
+
+    suspend fun update(settings: GlobalSettings) {
+        context.easyTierGlobalSettingsDataStore.edit { preferences ->
+            preferences[tunDeviceNameKey] = settings.tunDeviceName
+            preferences[noTunKey] = settings.noTun
+            if (settings.socks5Proxy.isNullOrEmpty()) {
+                preferences.remove(socks5ProxyKey)
+            } else {
+                preferences[socks5ProxyKey] = settings.socks5Proxy
+            }
+        }
+    }
 }

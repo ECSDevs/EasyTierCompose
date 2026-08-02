@@ -9,12 +9,14 @@ data class RootTunSpec(
     val mtu: Int,
     val manualRoutes: List<String>,
     val proxyCidrs: List<String>,
+    val devName: String,
 ) : Parcelable {
     constructor(parcel: Parcel) : this(
         parcel.readString(),
         parcel.readInt(),
         buildList { parcel.readStringList(this) },
         buildList { parcel.readStringList(this) },
+        parcel.readString().orEmpty(),
     )
 
     override fun writeToParcel(parcel: Parcel, flags: Int) {
@@ -22,6 +24,7 @@ data class RootTunSpec(
         parcel.writeInt(mtu)
         parcel.writeStringList(manualRoutes)
         parcel.writeStringList(proxyCidrs)
+        parcel.writeString(devName)
     }
 
     override fun describeContents() = 0

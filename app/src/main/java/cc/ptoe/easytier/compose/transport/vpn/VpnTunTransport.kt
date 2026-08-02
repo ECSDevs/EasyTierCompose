@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.VpnService
 import androidx.core.content.ContextCompat
 import cc.ptoe.easytier.compose.data.EasyTierProfile
+import cc.ptoe.easytier.compose.data.GlobalSettings
 import cc.ptoe.easytier.compose.data.RuntimeState
 import cc.ptoe.easytier.compose.data.RuntimeStatus
 import cc.ptoe.easytier.compose.transport.RuntimeEffect
@@ -24,7 +25,7 @@ class VpnTunTransport(private val context: Context, private val activity: Activi
     val effects: SharedFlow<RuntimeEffect> = mutableEffects.asSharedFlow()
     private var pending: PendingStart? = null
 
-    override suspend fun start(profile: EasyTierProfile, toml: String): RuntimeStatus {
+    override suspend fun start(profile: EasyTierProfile, toml: String, globalSettings: GlobalSettings): RuntimeStatus {
         val prepared = VpnService.prepare(context)
         val ipv4Cidr = profile.virtualIpv4?.takeIf { !profile.dhcp }
         if (prepared != null) {

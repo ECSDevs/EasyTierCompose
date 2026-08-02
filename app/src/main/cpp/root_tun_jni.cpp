@@ -23,9 +23,10 @@
 
 namespace {
 constexpr char kTag[] = "EasyTierRootTun";
-constexpr char kTunName[] = "easytier0";
+constexpr char kDefaultTunName[] = "easytier0";
 int g_control_fd = -1;
 int g_ifindex = 0;
+std::string g_tun_name;
 std::set<std::string> g_routes;
 
 void throwIOException(JNIEnv* env, const std::string& message) {
@@ -202,17 +203,25 @@ void destroyInterface() {
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_cc_ptoe_easytier_compose_transport_root_RootTunNative_create(JNIEnv* env, jobject, jstring cidr, jint mtu) {
+Java_cc_ptoe_easytier_compose_transport_root_RootTunNative_create(JNIEnv* env, jobject, jstring cidr, jint mtu, jstring devName) {
     std::string cidrValue;
     if (cidr != nullptr) {
         const char* chars = env->GetStringUTFChars(cidr, nullptr);
         cidrValue = chars;
         env->ReleaseStringUTFChars(cidr, chars);
     }
-    LOGI("create: cidr=%s mtu=%d", cidrValue.c_str(), mtu);
+    std::string devNameValue;
+    if (devName != nullptr) {
+        const char* chars = env->GetStringUTFChars(devName, nullptr);
+        devNameValue = chars;
+        env->ReleaseStringUTFChars(devName, chars);
+    }
+    if (devNameValue.empty()) devNameValue = kDefaultTunName;
+    g_tun_name = devNameValue;
+    LOGI("create: cidr=%s mtu=%d devName=%s", cidrValue.c_str(), mtu, g_tun_name.c_str());
     try {
-        if (g_control_fd >= 0) throw std::runtime_error("easytier0 is already owned by this helper");
-        if (interfaceExists(kTunName)) throw std::runtime_error("easytier0 already exists");
+        if (g_control_fd >= 0) throw std::runtime_error(g_tun_name + " is already owned by this helper");
+        if (interfaceExists(g_tun_name.c_str())) throw std::runtime_error(g_tun_name + " already exists");
         if (mtu < 576 || mtu > 9000) throw std::runtime_error("invalid MTU");
         int fd = open("/dev/net/tun", O_RDWR | O_CLOEXEC);
         if (fd < 0) {
@@ -221,17 +230,17 @@ Java_cc_ptoe_easytier_compose_transport_root_RootTunNative_create(JNIEnv* env, j
         }
         ifreq request{};
         request.ifr_flags = IFF_TUN | IFF_NO_PI;
-        std::strncpy(request.ifr_name, kTunName, IFNAMSIZ - 1);
+        std::strncpy(request.ifr_name, g_tun_name.c_str(), IFNAMSIZ - 1);
         if (ioctl(fd, TUNSETIFF, &request) < 0) {
             auto error = std::string("TUNSETIFF: ") + std::strerror(errno);
             LOGE("create: TUNSETIFF failed: %s", std::strerror(errno));
             close(fd);
             throw std::runtime_error(error);
         }
-        g_ifindex = if_nametoindex(kTunName);
+        g_ifindex = if_nametoindex(g_tun_name.c_str());
         if (g_ifindex == 0) {
             close(fd);
-            throw std::runtime_error("could not resolve easytier0 index");
+            throw std::runtime_error("could not resolve " + g_tun_name + " index");
         }
         g_control_fd = dup(fd);
         if (g_control_fd < 0) {

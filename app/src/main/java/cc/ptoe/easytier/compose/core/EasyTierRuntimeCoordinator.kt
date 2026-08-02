@@ -3,6 +3,7 @@ package cc.ptoe.easytier.compose.core
 import android.app.Activity
 import android.content.Context
 import cc.ptoe.easytier.compose.data.EasyTierProfile
+import cc.ptoe.easytier.compose.data.GlobalSettings
 import cc.ptoe.easytier.compose.data.RuntimeState
 import cc.ptoe.easytier.compose.data.RuntimeStatus
 import cc.ptoe.easytier.compose.data.TunMode
@@ -43,16 +44,16 @@ class EasyTierRuntimeCoordinator(context: Context, activity: Activity) {
         scope.launch { vpn.effects.collect { mutableEffects.emit(it) } }
     }
 
-    suspend fun start(profile: EasyTierProfile): RuntimeStatus = mutex.withLock {
-        val errors = ProfileValidator().validate(profile)
+    suspend fun start(profile: EasyTierProfile, globalSettings: GlobalSettings = GlobalSettings()): RuntimeStatus = mutex.withLock {
+        val errors = ProfileValidator().validate(profile, globalSettings)
         if (errors.isNotEmpty()) return@withLock failure(profile, errors.values.first())
-        val toml = TomlConfigBuilder.build(profile)
+        val toml = TomlConfigBuilder.build(profile, globalSettings)
         stopLocked()
         activeProfile = profile
         mutableStatus.value = RuntimeStatus(RuntimeState.STARTING, profile.id, profile.tunMode, null, null, null)
         return@withLock when (profile.tunMode) {
-            TunMode.VPN_SERVICE -> startVpn(profile, toml)
-            TunMode.ROOT_TUN -> root.start(profile, toml).also { mutableStatus.value = it }
+            TunMode.VPN_SERVICE -> startVpn(profile, toml, globalSettings)
+            TunMode.ROOT_TUN -> root.start(profile, toml, globalSettings).also { mutableStatus.value = it }
         }
     }
 
@@ -65,10 +66,10 @@ class EasyTierRuntimeCoordinator(context: Context, activity: Activity) {
         result
     }
 
-    private suspend fun startVpn(profile: EasyTierProfile, toml: String): RuntimeStatus = try {
+    private suspend fun startVpn(profile: EasyTierProfile, toml: String, globalSettings: GlobalSettings): RuntimeStatus = try {
         EasyTierJni.retainNetworkInstance(null)
         require(EasyTierJni.runNetworkInstance(toml) == 0) { nativeError("EasyTier failed to start") }
-        vpn.start(profile, toml).also {
+        vpn.start(profile, toml, globalSettings).also {
             mutableStatus.value = it
             if (it.state == RuntimeState.STARTING || it.state == RuntimeState.RUNNING) pollVpn()
         }

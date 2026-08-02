@@ -7,6 +7,7 @@ import android.content.ServiceConnection
 import android.os.IBinder
 import cc.ptoe.easytier.compose.core.TomlConfigBuilder
 import cc.ptoe.easytier.compose.data.EasyTierProfile
+import cc.ptoe.easytier.compose.data.GlobalSettings
 import cc.ptoe.easytier.compose.data.RuntimeState
 import cc.ptoe.easytier.compose.data.RuntimeStatus
 import cc.ptoe.easytier.compose.transport.RuntimeTransport
@@ -33,12 +34,12 @@ class RootTunTransport(private val context: Context) : RuntimeTransport {
         }
     }
 
-    override suspend fun start(profile: EasyTierProfile, toml: String): RuntimeStatus {
+    override suspend fun start(profile: EasyTierProfile, toml: String, globalSettings: GlobalSettings): RuntimeStatus {
         activeProfile = profile
         mutableStatus.value = RuntimeStatus(RuntimeState.STARTING, profile.id, profile.tunMode, null, null, null)
         val remote = bind() ?: return error(profile, "Root helper disconnected")
         return runCatching {
-            remote.start(profile.id, toml, TomlConfigBuilder.rootTunSpec(profile))
+            remote.start(profile.id, toml, TomlConfigBuilder.rootTunSpec(profile, globalSettings))
             repeat(30) {
                 delay(500)
                 val root = remote.status

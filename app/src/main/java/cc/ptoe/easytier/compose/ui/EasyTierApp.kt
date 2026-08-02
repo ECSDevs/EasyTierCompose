@@ -57,6 +57,11 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -99,10 +104,18 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import cc.ptoe.easytier.compose.BuildConfig
+import cc.ptoe.easytier.compose.data.CompressionAlgo
 import cc.ptoe.easytier.compose.data.EasyTierProfile
+import cc.ptoe.easytier.compose.data.EncryptionAlgorithm
+import cc.ptoe.easytier.compose.data.GlobalSettings
+import cc.ptoe.easytier.compose.data.Peer
+import cc.ptoe.easytier.compose.data.PortForward
+import cc.ptoe.easytier.compose.data.ProxyNetwork
 import cc.ptoe.easytier.compose.data.RuntimeState
 import cc.ptoe.easytier.compose.data.RuntimeStatus
+import cc.ptoe.easytier.compose.data.SecureMode
 import cc.ptoe.easytier.compose.data.TunMode
+import cc.ptoe.easytier.compose.data.VpnPortal
 import cc.ptoe.easytier.compose.transport.RuntimeEffect
 
 private enum class Destination(val label: String, val icon: ImageVector) {
@@ -201,6 +214,7 @@ fun EasyTierApp(
                     Destination.Settings -> SettingsScreen(
                         state = state,
                         onTunMode = viewModel::updateTunMode,
+                        onGlobalSettings = viewModel::updateGlobalSettings,
                         reset = viewModel::resetProfiles,
                     )
                 }
@@ -329,7 +343,6 @@ private fun StatusCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // 左：圆形背景图标
             Box(
                 modifier = Modifier
                     .size(48.dp)
@@ -353,7 +366,6 @@ private fun StatusCard(
                 }
             }
 
-            // 右：双行文本（主标题 + 副标题）
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -487,7 +499,7 @@ private fun ProfilesScreen(
                                 }
                             }
                             Text(
-                                text = "${profile.networkName} • ${profile.peerUrls.size} peers • ${if (profile.tunMode == TunMode.VPN_SERVICE) "VPN Service" else "Root TUN"}",
+                                text = "${profile.networkName} • ${profile.peers.size} peers • ${if (profile.tunMode == TunMode.VPN_SERVICE) "VPN Service" else "Root TUN"}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -541,7 +553,6 @@ private fun ProfileEditorScreen(
     save: () -> Unit,
 ) {
     var revealSecret by remember { mutableStateOf(false) }
-    val advanced = !profile.advancedToml.isNullOrBlank()
 
     LazyColumn(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         if (running) {
@@ -560,16 +571,15 @@ private fun ProfileEditorScreen(
             }
         }
 
-        // Section 1: Basic Information
         item {
-            SectionCard(title = "General Profile", icon = Icons.Default.Info) {
-                FormField("Profile name", profile.name, errors["name"]) { value -> update { it.copy(name = value) } }
-                FormField("Network name", profile.networkName, errors["networkName"], !advanced) { value -> update { it.copy(networkName = value) } }
+            SectionCard(title = "General", icon = Icons.Default.Info) {
+                FormField("Profile name", profile.name, errors["name"]) { v -> update { it.copy(name = v) } }
+                FormField("Hostname", profile.hostname.orEmpty(), null) { v -> update { it.copy(hostname = v.ifBlank { null }) } }
+                FormField("Network name", profile.networkName, errors["networkName"]) { v -> update { it.copy(networkName = v) } }
                 FormField(
                     label = "Network secret",
                     value = profile.networkSecret,
                     error = null,
-                    enabled = !advanced,
                     transformation = if (revealSecret) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
                         IconButton(onClick = { revealSecret = !revealSecret }) {
@@ -579,40 +589,137 @@ private fun ProfileEditorScreen(
                             )
                         }
                     },
-                ) { value -> update { it.copy(networkSecret = value) } }
+                ) { v -> update { it.copy(networkSecret = v) } }
+                SwitchRow("Use DHCP", profile.dhcp) { checked -> update { it.copy(dhcp = checked, virtualIpv4 = if (checked) null else it.virtualIpv4) } }
+                if (!profile.dhcp) {
+                    FormField("Static IPv4 CIDR", profile.virtualIpv4.orEmpty(), errors["virtualIpv4"]) { v -> update { it.copy(virtualIpv4 = v.ifBlank { null }) } }
+                }
+                FormField("Static IPv6 CIDR", profile.virtualIpv6.orEmpty(), errors["virtualIpv6"]) { v -> update { it.copy(virtualIpv6 = v.ifBlank { null }) } }
             }
         }
 
-        // Section 2: Peers & Network
         item {
             SectionCard(title = "Network & Peers", icon = Icons.Default.Router) {
-                ListField("Peer URLs", profile.peerUrls, errors["peerUrls"], !advanced) { value -> update { it.copy(peerUrls = value) } }
-                ListField("Listeners", profile.listeners, errors["listeners"], !advanced) { value -> update { it.copy(listeners = value) } }
-                if (!profile.dhcp) {
-                    FormField("Static IPv4 CIDR", profile.virtualIpv4.orEmpty(), errors["virtualIpv4"], !advanced) { value -> update { it.copy(virtualIpv4 = value) } }
-                }
-                SwitchRow("Use DHCP", profile.dhcp, !advanced) { checked -> update { it.copy(dhcp = checked, virtualIpv4 = if (checked) null else it.virtualIpv4) } }
+                PeerListField(profile.peers, errors["peers"]) { v -> update { it.copy(peers = v) } }
+                ListField("Listeners", profile.listeners, errors["listeners"]) { v -> update { it.copy(listeners = v) } }
+                ListField("Mapped listeners", profile.mappedListeners, errors["mappedListeners"]) { v -> update { it.copy(mappedListeners = v) } }
             }
         }
 
-        // Section 3: Routing & Advanced
         item {
-            SectionCard(title = "Routing & Advanced", icon = Icons.Default.Tune) {
-                ListField("Proxy CIDRs", profile.proxyCidrs, errors["proxyCidrs"], !advanced) { value -> update { it.copy(proxyCidrs = value) } }
-                ListField("Manual routes", profile.manualRoutes, errors["manualRoutes"], !advanced) { value -> update { it.copy(manualRoutes = value) } }
-                SwitchRow("Magic DNS", profile.enableMagicDns, !advanced && profile.tunMode == TunMode.VPN_SERVICE) { checked -> update { it.copy(enableMagicDns = checked) } }
+            SectionCard(title = "Routing", icon = Icons.Default.Tune) {
+                SwitchRow("Magic DNS", profile.enableMagicDns, profile.tunMode == TunMode.VPN_SERVICE) { checked -> update { it.copy(enableMagicDns = checked) } }
                 if (profile.tunMode == TunMode.ROOT_TUN) {
                     Text("Magic DNS requires VPN Service mode", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                FormField("MTU", profile.mtu.toString(), errors["mtu"], !advanced) { value -> update { it.copy(mtu = value.toIntOrNull() ?: it.mtu) } }
-                SwitchRow("Advanced TOML", advanced, profile.tunMode == TunMode.VPN_SERVICE) { checked -> update { it.copy(advancedToml = if (checked) "" else null) } }
-                if (profile.tunMode == TunMode.ROOT_TUN) {
-                    Text("Advanced TOML is supported only in VPN Service mode", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                FormField("MTU", profile.mtu.toString(), errors["mtu"]) { v -> update { it.copy(mtu = v.toIntOrNull() ?: it.mtu) } }
+                FormField("TLD DNS zone", profile.tldDnsZone, errors["tldDnsZone"]) { v -> update { it.copy(tldDnsZone = v) } }
+                ProxyNetworkListField(profile.proxyNetworks, errors["proxyNetworks"]) { v -> update { it.copy(proxyNetworks = v) } }
+                ListField("Manual routes", profile.manualRoutes, errors["manualRoutes"]) { v -> update { it.copy(manualRoutes = v) } }
+                SwitchRow("Enable exit node", profile.enableExitNode) { checked -> update { it.copy(enableExitNode = checked) } }
+                ListField("Exit nodes", profile.exitNodes, errors["exitNodes"]) { v -> update { it.copy(exitNodes = v) } }
+            }
+        }
+
+        item {
+            SectionCard(title = "IPv6 Public Address", icon = Icons.Default.Router) {
+                SwitchRow("Provider", profile.ipv6PublicAddrProvider) { checked -> update { it.copy(ipv6PublicAddrProvider = checked) } }
+                SwitchRow("Auto", profile.ipv6PublicAddrAuto) { checked -> update { it.copy(ipv6PublicAddrAuto = checked) } }
+                FormField("IPv6 public prefix (CIDR)", profile.ipv6PublicAddrPrefix.orEmpty(), errors["ipv6PublicAddrPrefix"]) { v -> update { it.copy(ipv6PublicAddrPrefix = v.ifBlank { null }) } }
+            }
+        }
+
+        item {
+            SectionCard(title = "Port Forwards", icon = Icons.Default.Tune) {
+                PortForwardListField(profile.portForwards, errors["portForwards"]) { v -> update { it.copy(portForwards = v) } }
+            }
+        }
+
+        item {
+            SectionCard(title = "VPN Portal (WireGuard)", icon = Icons.Default.VpnKey) {
+                val portal = profile.vpnPortal
+                SwitchRow("Enable WireGuard portal", portal != null) { checked ->
+                    update { it.copy(vpnPortal = if (checked) VpnPortal("", "") else null) }
                 }
-                if (advanced) {
-                    FormField("Advanced TOML", profile.advancedToml.orEmpty(), errors["advancedToml"]) { value -> update { it.copy(advancedToml = value) } }
-                    Text("Advanced TOML replaces the structured configuration form.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (portal != null) {
+                    FormField("Client CIDR", portal.clientCidr, errors["vpnPortal"]) { v -> update { it.copy(vpnPortal = portal.copy(clientCidr = v)) } }
+                    FormField("WireGuard listen", portal.wireguardListen, errors["vpnPortal"]) { v -> update { it.copy(vpnPortal = portal.copy(wireguardListen = v)) } }
                 }
+            }
+        }
+
+        item {
+            SectionCard(title = "Secure Mode", icon = Icons.Default.VpnKey) {
+                SwitchRow("Enable secure mode", profile.secureMode.enabled) { checked -> update { it.copy(secureMode = it.secureMode.copy(enabled = checked)) } }
+                if (profile.secureMode.enabled) {
+                    FormField("Local private key", profile.secureMode.localPrivateKey.orEmpty(), null) { v -> update { it.copy(secureMode = it.secureMode.copy(localPrivateKey = v.ifBlank { null })) } }
+                    FormField("Local public key", profile.secureMode.localPublicKey.orEmpty(), null) { v -> update { it.copy(secureMode = it.secureMode.copy(localPublicKey = v.ifBlank { null })) } }
+                }
+            }
+        }
+
+        item {
+            SectionCard(title = "STUN & Whitelists", icon = Icons.Default.Router) {
+                ListField("STUN servers", profile.stunServers, errors["stunServers"]) { v -> update { it.copy(stunServers = v) } }
+                ListField("STUN servers (IPv6)", profile.stunServersV6, errors["stunServersV6"]) { v -> update { it.copy(stunServersV6 = v) } }
+                ListField("TCP whitelist", profile.tcpWhitelist, errors["tcpWhitelist"]) { v -> update { it.copy(tcpWhitelist = v) } }
+                ListField("UDP whitelist", profile.udpWhitelist, errors["udpWhitelist"]) { v -> update { it.copy(udpWhitelist = v) } }
+                FormField("Relay network whitelist", profile.relayNetworkWhitelist, null) { v -> update { it.copy(relayNetworkWhitelist = v) } }
+            }
+        }
+
+        item {
+            SectionCard(title = "Flags — General", icon = Icons.Default.Tune) {
+                ChoiceRow("Default protocol", profile.defaultProtocol, listOf("tcp", "udp", "wss")) { v -> update { it.copy(defaultProtocol = v) } }
+                SwitchRow("Enable encryption", profile.enableEncryption) { c -> update { it.copy(enableEncryption = c) } }
+                ChoiceRow("Encryption algorithm", profile.encryptionAlgorithm.name, EncryptionAlgorithm.entries.map { it.name }) { v ->
+                    update { it.copy(encryptionAlgorithm = EncryptionAlgorithm.valueOf(v)) }
+                }
+                ChoiceRow("Data compression", profile.dataCompressAlgo.name, CompressionAlgo.entries.map { it.name }) { v ->
+                    update { it.copy(dataCompressAlgo = CompressionAlgo.valueOf(v)) }
+                }
+                SwitchRow("Enable IPv6", profile.enableIpv6) { c -> update { it.copy(enableIpv6 = c) } }
+                SwitchRow("Latency first", profile.latencyFirst) { c -> update { it.copy(latencyFirst = c) } }
+                SwitchRow("Multi-thread", profile.multiThread) { c -> update { it.copy(multiThread = c) } }
+                FormField("Multi-thread count", profile.multiThreadCount.toString(), errors["multiThreadCount"]) { v -> update { it.copy(multiThreadCount = v.toIntOrNull() ?: it.multiThreadCount) } }
+                SwitchRow("Bind device", profile.bindDevice) { c -> update { it.copy(bindDevice = c) } }
+                SwitchRow("Private mode", profile.privateMode) { c -> update { it.copy(privateMode = c) } }
+                SwitchRow("Proxy forward by system", profile.proxyForwardBySystem) { c -> update { it.copy(proxyForwardBySystem = c) } }
+                SwitchRow("Disable relay data", profile.disableRelayData) { c -> update { it.copy(disableRelayData = c) } }
+                SwitchRow("Enable UDP broadcast relay", profile.enableUdpBroadcastRelay) { c -> update { it.copy(enableUdpBroadcastRelay = c) } }
+                FormField("Foreign relay bps limit", profile.foreignRelayBpsLimit.toString(), errors["foreignRelayBpsLimit"]) { v -> update { it.copy(foreignRelayBpsLimit = v.toLongOrNull() ?: it.foreignRelayBpsLimit) } }
+                FormField("Instance recv bps limit", profile.instanceRecvBpsLimit.toString(), errors["instanceRecvBpsLimit"]) { v -> update { it.copy(instanceRecvBpsLimit = v.toLongOrNull() ?: it.instanceRecvBpsLimit) } }
+            }
+        }
+
+        item {
+            SectionCard(title = "Flags — P2P", icon = Icons.Default.Tune) {
+                SwitchRow("Disable P2P", profile.disableP2p) { c -> update { it.copy(disableP2p = c) } }
+                SwitchRow("P2P only", profile.p2pOnly) { c -> update { it.copy(p2pOnly = c) } }
+                SwitchRow("Lazy P2P", profile.lazyP2p) { c -> update { it.copy(lazyP2p = c) } }
+                SwitchRow("Relay all peer RPC", profile.relayAllPeerRpc) { c -> update { it.copy(relayAllPeerRpc = c) } }
+                SwitchRow("Disable TCP hole punching", profile.disableTcpHolePunching) { c -> update { it.copy(disableTcpHolePunching = c) } }
+                SwitchRow("Disable UDP hole punching", profile.disableUdpHolePunching) { c -> update { it.copy(disableUdpHolePunching = c) } }
+                SwitchRow("Disable symmetric hole punching", profile.disableSymHolePunching) { c -> update { it.copy(disableSymHolePunching = c) } }
+                SwitchRow("Disable UPnP", profile.disableUpnp) { c -> update { it.copy(disableUpnp = c) } }
+            }
+        }
+
+        item {
+            SectionCard(title = "Flags — KCP Proxy", icon = Icons.Default.Tune) {
+                SwitchRow("Enable KCP proxy", profile.enableKcpProxy) { c -> update { it.copy(enableKcpProxy = c) } }
+                SwitchRow("Disable KCP input", profile.disableKcpInput) { c -> update { it.copy(disableKcpInput = c) } }
+                SwitchRow("Disable relay KCP", profile.disableRelayKcp) { c -> update { it.copy(disableRelayKcp = c) } }
+                SwitchRow("Enable relay foreign network KCP", profile.enableRelayForeignNetworkKcp) { c -> update { it.copy(enableRelayForeignNetworkKcp = c) } }
+            }
+        }
+
+        item {
+            SectionCard(title = "Flags — QUIC Proxy", icon = Icons.Default.Tune) {
+                SwitchRow("Enable QUIC proxy", profile.enableQuicProxy) { c -> update { it.copy(enableQuicProxy = c) } }
+                SwitchRow("Disable QUIC input", profile.disableQuicInput) { c -> update { it.copy(disableQuicInput = c) } }
+                SwitchRow("Disable relay QUIC", profile.disableRelayQuic) { c -> update { it.copy(disableRelayQuic = c) } }
+                SwitchRow("Enable relay foreign network QUIC", profile.enableRelayForeignNetworkQuic) { c -> update { it.copy(enableRelayForeignNetworkQuic = c) } }
             }
         }
 
@@ -670,6 +777,27 @@ private fun SwitchRow(label: String, checked: Boolean, enabled: Boolean = true, 
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
         Switch(checked, onChange, enabled = enabled)
+    }
+}
+
+@Composable
+private fun ChoiceRow(label: String, value: String, options: List<String>, onChange: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, true),
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { option ->
+                DropdownMenuItem(text = { Text(option) }, onClick = { onChange(option); expanded = false })
+            }
+        }
     }
 }
 
@@ -832,9 +960,292 @@ private fun ListEditorDialog(
 }
 
 @Composable
+private fun PeerListField(peers: List<Peer>, error: String?, onChange: (List<Peer>) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val fieldValue = when {
+        peers.isEmpty() -> ""
+        peers.size == 1 -> peers.first().uri
+        else -> "${peers.size} peers"
+    }
+    Box(Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = fieldValue,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Peers") },
+            supportingText = if (error == null) null else { { Text(error) } },
+            isError = error != null,
+            trailingIcon = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Edit peers") },
+            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Box(modifier = Modifier.matchParentSize().clickable { open = true })
+    }
+    if (open) PeerListEditorDialog(peers, { open = false }, onChange)
+}
+
+@Composable
+private fun PeerListEditorDialog(peers: List<Peer>, onDismiss: () -> Unit, onChange: (List<Peer>) -> Unit) {
+    var draft by remember(peers) { mutableStateOf(peers) }
+    var editingIndex by remember { mutableStateOf<Int?>(null) }
+    var uri by remember { mutableStateOf("") }
+    var publicKey by remember { mutableStateOf("") }
+
+    fun reset() { editingIndex = null; uri = ""; publicKey = "" }
+    fun commit() {
+        val trimmedUri = uri.trim()
+        if (trimmedUri.isEmpty()) { reset(); return }
+        val peer = Peer(uri = trimmedUri, peerPublicKey = publicKey.trim().ifBlank { null })
+        draft = when (editingIndex) {
+            null -> draft + peer
+            else -> draft.mapIndexed { i, p -> if (i == editingIndex) peer else p }
+        }
+        reset()
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (draft != peers) onChange(draft); onDismiss() },
+        title = { Text("Peers") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(if (editingIndex != null) "Edit peer" else "Add peer", style = MaterialTheme.typography.labelLarge)
+                OutlinedTextField(
+                    value = uri, onValueChange = { uri = it },
+                    label = { Text("Peer URI") }, singleLine = true,
+                    shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = publicKey, onValueChange = { publicKey = it },
+                    label = { Text("Peer public key (optional)") }, singleLine = true,
+                    shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth(),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (editingIndex != null) TextButton(onClick = { reset() }) { Text("Cancel") }
+                    Button(onClick = { commit() }, enabled = uri.trim().isNotEmpty(), shape = MaterialTheme.shapes.medium) {
+                        Icon(if (editingIndex == null) Icons.Default.Add else Icons.Default.Check, null, Modifier.size(18.dp))
+                        Spacer(Modifier.size(8.dp))
+                        Text(if (editingIndex == null) "Add" else "Update")
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                if (draft.isEmpty()) {
+                    Text("No peers yet.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        draft.forEachIndexed { index, peer ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(peer.uri, style = MaterialTheme.typography.bodyMedium)
+                                    peer.peerPublicKey?.takeIf { it.isNotBlank() }?.let {
+                                        Text("key: $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                                IconButton(onClick = { editingIndex = index; uri = peer.uri; publicKey = peer.peerPublicKey.orEmpty() }) {
+                                    Icon(Icons.Default.Edit, contentDescription = "Edit peer")
+                                }
+                                IconButton(onClick = { draft = draft.filterIndexed { i, _ -> i != index } }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete peer")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { Button(onClick = { if (draft != peers) onChange(draft); onDismiss() }, shape = MaterialTheme.shapes.medium) { Text("Done") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun ProxyNetworkListField(networks: List<ProxyNetwork>, error: String?, onChange: (List<ProxyNetwork>) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val fieldValue = when {
+        networks.isEmpty() -> ""
+        networks.size == 1 -> networks.first().cidr
+        else -> "${networks.size} networks"
+    }
+    Box(Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = fieldValue,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Proxy networks") },
+            supportingText = if (error == null) null else { { Text(error) } },
+            isError = error != null,
+            trailingIcon = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Edit proxy networks") },
+            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Box(modifier = Modifier.matchParentSize().clickable { open = true })
+    }
+    if (open) ProxyNetworkEditorDialog(networks, { open = false }, onChange)
+}
+
+@Composable
+private fun ProxyNetworkEditorDialog(networks: List<ProxyNetwork>, onDismiss: () -> Unit, onChange: (List<ProxyNetwork>) -> Unit) {
+    var draft by remember(networks) { mutableStateOf(networks) }
+    var editingIndex by remember { mutableStateOf<Int?>(null) }
+    var cidr by remember { mutableStateOf("") }
+    var mappedCidr by remember { mutableStateOf("") }
+    var allow by remember { mutableStateOf("") }
+
+    fun reset() { editingIndex = null; cidr = ""; mappedCidr = ""; allow = "" }
+    fun commit() {
+        val trimmedCidr = cidr.trim()
+        if (trimmedCidr.isEmpty()) { reset(); return }
+        val network = ProxyNetwork(
+            cidr = trimmedCidr,
+            mappedCidr = mappedCidr.trim().ifBlank { null },
+            allow = allow.split(",", " ").map(String::trim).filter(String::isNotEmpty),
+        )
+        draft = when (editingIndex) {
+            null -> draft + network
+            else -> draft.mapIndexed { i, n -> if (i == editingIndex) network else n }
+        }
+        reset()
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (draft != networks) onChange(draft); onDismiss() },
+        title = { Text("Proxy networks") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(if (editingIndex != null) "Edit network" else "Add network", style = MaterialTheme.typography.labelLarge)
+                OutlinedTextField(value = cidr, onValueChange = { cidr = it }, label = { Text("CIDR") }, singleLine = true, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = mappedCidr, onValueChange = { mappedCidr = it }, label = { Text("Mapped CIDR (optional)") }, singleLine = true, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = allow, onValueChange = { allow = it }, label = { Text("Allow (tcp,udp,icmp — comma separated)") }, singleLine = true, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth())
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (editingIndex != null) TextButton(onClick = { reset() }) { Text("Cancel") }
+                    Button(onClick = { commit() }, enabled = cidr.trim().isNotEmpty(), shape = MaterialTheme.shapes.medium) {
+                        Icon(if (editingIndex == null) Icons.Default.Add else Icons.Default.Check, null, Modifier.size(18.dp))
+                        Spacer(Modifier.size(8.dp))
+                        Text(if (editingIndex == null) "Add" else "Update")
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                if (draft.isEmpty()) {
+                    Text("No proxy networks yet.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        draft.forEachIndexed { index, network ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(network.cidr, style = MaterialTheme.typography.bodyMedium)
+                                    val extra = listOfNotNull(
+                                        network.mappedCidr?.takeIf { it.isNotBlank() }?.let { "mapped: $it" },
+                                        network.allow.takeIf { it.isNotEmpty() }?.joinToString(",")?.let { "allow: $it" },
+                                    ).joinToString(" • ")
+                                    if (extra.isNotEmpty()) Text(extra, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                IconButton(onClick = { editingIndex = index; cidr = network.cidr; mappedCidr = network.mappedCidr.orEmpty(); allow = network.allow.joinToString(",") }) {
+                                    Icon(Icons.Default.Edit, contentDescription = "Edit network")
+                                }
+                                IconButton(onClick = { draft = draft.filterIndexed { i, _ -> i != index } }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete network")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { Button(onClick = { if (draft != networks) onChange(draft); onDismiss() }, shape = MaterialTheme.shapes.medium) { Text("Done") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun PortForwardListField(forwards: List<PortForward>, error: String?, onChange: (List<PortForward>) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val fieldValue = when {
+        forwards.isEmpty() -> ""
+        forwards.size == 1 -> forwards.first().bindAddr
+        else -> "${forwards.size} forwards"
+    }
+    Box(Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = fieldValue,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Port forwards") },
+            supportingText = if (error == null) null else { { Text(error) } },
+            isError = error != null,
+            trailingIcon = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Edit port forwards") },
+            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Box(modifier = Modifier.matchParentSize().clickable { open = true })
+    }
+    if (open) PortForwardEditorDialog(forwards, { open = false }, onChange)
+}
+
+@Composable
+private fun PortForwardEditorDialog(forwards: List<PortForward>, onDismiss: () -> Unit, onChange: (List<PortForward>) -> Unit) {
+    var draft by remember(forwards) { mutableStateOf(forwards) }
+    var editingIndex by remember { mutableStateOf<Int?>(null) }
+    var bindAddr by remember { mutableStateOf("") }
+    var dstAddr by remember { mutableStateOf("") }
+    var proto by remember { mutableStateOf("tcp") }
+
+    fun reset() { editingIndex = null; bindAddr = ""; dstAddr = ""; proto = "tcp" }
+    fun commit() {
+        if (bindAddr.isBlank() || dstAddr.isBlank()) { reset(); return }
+        val forward = PortForward(bindAddr = bindAddr.trim(), dstAddr = dstAddr.trim(), proto = proto.trim().lowercase())
+        draft = when (editingIndex) {
+            null -> draft + forward
+            else -> draft.mapIndexed { i, f -> if (i == editingIndex) forward else f }
+        }
+        reset()
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (draft != forwards) onChange(draft); onDismiss() },
+        title = { Text("Port forwards") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(if (editingIndex != null) "Edit forward" else "Add forward", style = MaterialTheme.typography.labelLarge)
+                OutlinedTextField(value = bindAddr, onValueChange = { bindAddr = it }, label = { Text("Bind address (host:port)") }, singleLine = true, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = dstAddr, onValueChange = { dstAddr = it }, label = { Text("Destination address (host:port)") }, singleLine = true, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth())
+                ChoiceRow("Protocol", proto, listOf("tcp", "udp")) { proto = it }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (editingIndex != null) TextButton(onClick = { reset() }) { Text("Cancel") }
+                    Button(onClick = { commit() }, enabled = bindAddr.isNotBlank() && dstAddr.isNotBlank(), shape = MaterialTheme.shapes.medium) {
+                        Icon(if (editingIndex == null) Icons.Default.Add else Icons.Default.Check, null, Modifier.size(18.dp))
+                        Spacer(Modifier.size(8.dp))
+                        Text(if (editingIndex == null) "Add" else "Update")
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                if (draft.isEmpty()) {
+                    Text("No port forwards yet.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        draft.forEachIndexed { index, forward ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("${forward.bindAddr} → ${forward.dstAddr} (${forward.proto})", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                                IconButton(onClick = { editingIndex = index; bindAddr = forward.bindAddr; dstAddr = forward.dstAddr; proto = forward.proto }) {
+                                    Icon(Icons.Default.Edit, contentDescription = "Edit forward")
+                                }
+                                IconButton(onClick = { draft = draft.filterIndexed { i, _ -> i != index } }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete forward")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { Button(onClick = { if (draft != forwards) onChange(draft); onDismiss() }, shape = MaterialTheme.shapes.medium) { Text("Done") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
 private fun SettingsScreen(
     state: EasyTierUiState,
     onTunMode: (TunMode) -> Unit,
+    onGlobalSettings: (GlobalSettings) -> Unit,
     reset: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -851,8 +1262,11 @@ private fun SettingsScreen(
     val profile = state.profiles.firstOrNull { it.id == state.selectedProfileId }
     val active = state.runtime.state in setOf(RuntimeState.STARTING, RuntimeState.RUNNING)
     val tunMode = profile?.tunMode ?: TunMode.VPN_SERVICE
+    val settings = state.globalSettings
 
     var confirmReset by remember { mutableStateOf(false) }
+    var tunDeviceName by remember(settings.tunDeviceName) { mutableStateOf(settings.tunDeviceName) }
+    var socks5Proxy by remember(settings.socks5Proxy) { mutableStateOf(settings.socks5Proxy.orEmpty()) }
 
     LazyColumn(verticalArrangement = Arrangement.spacedBy(20.dp)) {
         item {
@@ -875,6 +1289,46 @@ private fun SettingsScreen(
                         )
                     },
                 )
+            }
+        }
+
+        item {
+            SettingsGroup {
+                Column(Modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Global overrides", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    OutlinedTextField(
+                        value = tunDeviceName,
+                        onValueChange = { tunDeviceName = it },
+                        label = { Text("TUN device name (root only)") },
+                        singleLine = true,
+                        shape = MaterialTheme.shapes.medium,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    SwitchRow("No TUN (requires SOCKS5)", settings.noTun) { checked ->
+                        onGlobalSettings(settings.copy(noTun = checked))
+                    }
+                    OutlinedTextField(
+                        value = socks5Proxy,
+                        onValueChange = { socks5Proxy = it },
+                        label = { Text("SOCKS5 proxy address") },
+                        singleLine = true,
+                        shape = MaterialTheme.shapes.medium,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (settings.noTun && socks5Proxy.isBlank()) {
+                        Text("No-TUN mode requires a SOCKS5 proxy address", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    }
+                    Button(
+                        onClick = {
+                            onGlobalSettings(settings.copy(
+                                tunDeviceName = tunDeviceName.trim().ifBlank { "easytier0" },
+                                socks5Proxy = socks5Proxy.trim().ifBlank { null },
+                            ))
+                        },
+                        shape = MaterialTheme.shapes.medium,
+                    ) { Text("Save global settings") }
+                }
             }
         }
 

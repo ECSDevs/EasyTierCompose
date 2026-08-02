@@ -95,16 +95,17 @@ class EasyTierRootService : RootService() {
     }
 
     private fun attachTun(profileId: String, cidr: String, spec: RootTunSpec, runtimeRoutes: List<String> = emptyList()) {
-        Log.i(TAG, "attachTun: profileId=$profileId cidr=$cidr mtu=${spec.mtu}")
-        val fd = RootTunNative.create(cidr, spec.mtu)
+        val devName = spec.devName.ifBlank { "easytier0" }
+        Log.i(TAG, "attachTun: profileId=$profileId cidr=$cidr mtu=${spec.mtu} devName=$devName")
+        val fd = RootTunNative.create(cidr, spec.mtu, devName)
         tunDescriptor = ParcelFileDescriptor.adoptFd(fd)
         require(EasyTierJni.setTunFd(profileId, tunDescriptor!!.fd) == 0) { nativeError("EasyTier failed to attach root TUN") }
         val allRoutes = (runtimeRoutes + spec.manualRoutes + spec.proxyCidrs)
             .filter(String::isNotBlank).distinct().sorted()
         Log.i(TAG, "attachTun: syncing ${allRoutes.size} routes: $allRoutes")
         RootTunNative.syncRoutes(allRoutes.toTypedArray())
-        currentStatus.set(RootRuntimeStatus(RuntimeState.RUNNING.name, cidr, "easytier0", null))
-        Log.i(TAG, "attachTun: running, virtualIpv4=$cidr dev=easytier0")
+        currentStatus.set(RootRuntimeStatus(RuntimeState.RUNNING.name, cidr, devName, null))
+        Log.i(TAG, "attachTun: running, virtualIpv4=$cidr dev=$devName")
     }
 
     private fun stopRoot() {

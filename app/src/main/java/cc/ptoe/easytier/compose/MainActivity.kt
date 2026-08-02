@@ -8,6 +8,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import cc.ptoe.easytier.compose.core.EasyTierRuntimeCoordinator
+import cc.ptoe.easytier.compose.data.GlobalSettingsRepository
 import cc.ptoe.easytier.compose.data.ProfileRepository
 import cc.ptoe.easytier.compose.ui.EasyTierApp
 import cc.ptoe.easytier.compose.ui.EasyTierViewModel
@@ -38,6 +39,7 @@ class MainActivity : ComponentActivity() {
         override fun <T : ViewModel> create(modelClass: Class<T>): T = EasyTierViewModel(
             ProfileRepository(activity.applicationContext),
             EasyTierRuntimeCoordinator(activity.applicationContext, activity),
+            GlobalSettingsRepository(activity.applicationContext),
         ) as T
     }
 
