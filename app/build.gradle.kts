@@ -1,9 +1,36 @@
+import java.util.concurrent.TimeUnit
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     id("kotlin-parcelize")
 }
+
+// Semantic version read from version.txt at the project root.
+val semanticVersion: String = run {
+    val versionFile = rootProject.file("version.txt")
+    if (versionFile.exists()) versionFile.readText().trim().ifEmpty { "0.0.0" } else "0.0.0"
+}
+
+// Numeric version code derived from the total git commit count.
+val commitCount: Int = run {
+    try {
+        val process = ProcessBuilder("git", "rev-list", "--count", "HEAD")
+            .directory(rootProject.projectDir)
+            .redirectErrorStream(true)
+            .start()
+        if (process.waitFor(5, TimeUnit.SECONDS)) {
+            process.inputStream.bufferedReader().readText().trim().toIntOrNull() ?: 1
+        } else {
+            process.destroyForcibly()
+            1
+        }
+    } catch (e: Exception) {
+        1
+    }
+}
+
 android {
     namespace = "cc.ptoe.easytier.compose"
     compileSdk {
@@ -16,8 +43,8 @@ android {
         applicationId = "cc.ptoe.easytier.compose"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = commitCount
+        versionName = semanticVersion
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
