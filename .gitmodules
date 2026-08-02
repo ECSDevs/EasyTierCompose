@@ -1,0 +1,3 @@
+[submodule "EasyTier-Core"]
+	path = EasyTier-Core
+	url = https://github.com/ECSDevs/EasyTier.git
