@@ -14,10 +14,34 @@
 - 📱 **纯 Compose UI** — Material 3 + 自适应布局（手机 NavigationBar / 平板 NavigationRail）
 - 🔌 **双 TUN 模式** — `VPN_SERVICE`（免 root，系统 VPN 授权）与 `ROOT_TUN`（root 进程 + 真实 `easytier0` 接口）
 - 🛡️ **JNI 门面架构** — 应用层不直接接触原生符号，统一通过 `core.EasyTierJni` 访问
-- 💾 **DataStore 持久化** — 多 profile 管理，含损坏数据自动恢复
-- 🎛️ **结构化 & 高级 TOML** — 表单输入或直接编辑 TOML（VPN Service 模式）
-- 🌐 **Magic DNS** — VPN Service 模式下支持 EasyTier 内置 DNS（`100.100.100.101`）
+- 💾 **DataStore 持久化** — 多 profile 管理 + 选中态，含损坏数据自动恢复
+- 🎛️ **全配置项表单** — 覆盖 EasyTier Core 全部字段的分区编辑器（General / Network & Peers / Routing / IPv6 / Port Forwards / VPN Portal / Secure Mode / STUN & Whitelists / Flags — General / P2P / KCP / QUIC），生成结构化 TOML 并经原生 `parseConfig` 校验
+- 🌐 **Magic DNS** — 两种 TUN 模式均支持 EasyTier 内置 DNS（`100.100.100.101`）；ROOT_TUN 额外通过 root shell 切换系统 DNS
+- 👥 **Peers 屏幕** — 列出运行时 peer，展示虚拟 IP / 延迟 / 隧道协议 / 丢包率 / NAT 类型 / cost（直连/中继）
+- 🌍 **Global overrides** — 全局共享的 TUN 设备名 / `no_tun` / SOCKS5（端口与监听地址）
+- 🏷️ **Hostname 自动补全** — profile 留空时取 Android 设备名（与 EasyTier Core `get_hostname` 行为一致）
 - ⚡ **协程编排** — `SupervisorJob + Mutex` 串行化运行时状态机，避免竞态
+
+## 界面截图
+
+<table>
+  <tr>
+    <td width="50%" align="center"><b>Dashboard</b></td>
+    <td width="50%" align="center"><b>Profiles</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/dashboard.png" alt="Dashboard"></td>
+    <td><img src="docs/profiles.png" alt="Profiles"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Peers</b></td>
+    <td align="center"><b>Settings</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/peers.png" alt="Peers"></td>
+    <td><img src="docs/settings.png" alt="Settings"></td>
+  </tr>
+</table>
 
 ## 系统要求
 
@@ -44,14 +68,14 @@ app/src/main/java/cc/ptoe/easytier/compose/
 │   ├── EasyTierRuntimeCoordinator.kt
 │   └── ProfileConfig.kt
 ├── data/                        # 模型 + DataStore 持久化
-│   ├── EasyTierModels.kt
-│   └── ProfileRepository.kt
+│   ├── EasyTierModels.kt        # EasyTierProfile / GlobalSettings / RuntimePeer ...
+│   └── ProfileRepository.kt     # ProfileRepository + GlobalSettingsRepository
 ├── transport/                   # TUN 抽象 + 两种实现
 │   ├── RuntimeTransport.kt
 │   ├── vpn/                     # VpnService 实现（免 root）
 │   └── root/                    # libsu RootService 实现（root）
 └── ui/                          # Compose UI + ViewModel + Theme
-    ├── EasyTierApp.kt
+    ├── EasyTierApp.kt           # Dashboard / Profiles / Peers / Settings / Editor
     ├── EasyTierViewModel.kt
     └── theme/
 ```
@@ -63,8 +87,7 @@ app/src/main/java/cc/ptoe/easytier/compose/
 | 实现 | `VpnService.Builder` | `/dev/net/tun` + netlink |
 | 权限 | 系统 VPN 授权弹窗 | root（libsu RootService IPC） |
 | 前台服务 | `specialUse` | 否（root 进程内运行） |
-| Magic DNS | 支持 | 不支持 |
-| 高级 TOML | 支持 | 不支持 |
+| Magic DNS | 支持（`100.100.100.101`） | 支持（root 进程内运行 + `settings put global dns1` 切换系统 DNS） |
 | 设备名 | Android VPN（虚拟） | `easytier0`（真实接口） |
 
 详见 [AGENTS.md](AGENTS.md) 中的"两种 TUN 模式"章节。
@@ -99,7 +122,7 @@ git submodule update --init --recursive
 ./gradlew :app:testDebugUnitTest
 ```
 
-测试覆盖 `TomlConfigBuilder` 与 `ProfileValidator`，通过 `NativeConfigParser` 桩绕过真实 JNI。
+测试覆盖 `TomlConfigBuilder`（结构化 TOML、port forward / VPN portal / secure mode / 全 flags 字段、`rootTunSpec`）、`ProfileValidator`（CIDR / MTU / peers / proxy networks / port forwards / VPN portal / SOCKS5 端口 / bps 限制等校验）与 GlobalSettings 覆盖，通过 `NativeConfigParser` 桩绕过真实 JNI。
 
 ## 原生库说明
 
@@ -136,7 +159,9 @@ VPN 前台服务的 `PROPERTY_SPECIAL_USE_FGS_SUBTYPE` 标注为 `EasyTier virtu
 
 - **JNI 调用**：只使用 `cc.ptoe.easytier.compose.core.EasyTierJni`，禁止直接调用 `com.easytier.jni.EasyTierJNI`
 - **不自动连接**：`MainActivity.onResume()` 有意留空，连接必须由用户显式触发
-- **运行中不可编辑/删除**：profile 处于 `STARTING`/`RUNNING` 状态时，编辑、删除、切换 TUN 模式均被拒绝
+- **运行中不可编辑/删除/切换模式**：profile 处于 `STARTING`/`RUNNING` 状态时，编辑、删除、切换 TUN 模式均被拒绝；Reset 会先停止运行时再清空
+- **GlobalSettings**：TUN 设备名 / `no_tun` / SOCKS5 选项独立持久化，所有 profile 共享；`ProfileValidator.validate` 与 `TomlConfigBuilder.build` 均需显式传入
+- **Hostname 自动补全**：profile 留空时协调器从 Android 设备名补全（与 EasyTier Core `get_hostname` 一致）
 - **netlink 路由**：TUN 远端网络路由必须使用 `RT_SCOPE_UNIVERSE`，否则对任意 CIDR 返回 `EINVAL`
 - **IPv4 解析**：EasyTier 序列化的 `addr` 是 `u32::from_be_bytes` 的 big-endian 整数，需按大端拆解
 

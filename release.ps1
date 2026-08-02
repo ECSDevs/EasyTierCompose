@@ -60,7 +60,7 @@ Set-Location $repoRoot
 
 # --- argument validation ---------------------------------------------------
 
-$bumpFlags = @($Major, $Minor, $Patch) | Where-Object { $_ }
+$bumpFlags = @($Major, $Minor, $Patch | Where-Object { $_ })
 if ($Version -and $bumpFlags.Count -gt 0) {
     throw '-Version is mutually exclusive with -Major/-Minor/-Patch.'
 }
