@@ -131,7 +131,8 @@ data class EasyTierProfile(
 data class GlobalSettings(
     val tunDeviceName: String = "easytier0",
     val noTun: Boolean = false,
-    val socks5Proxy: String? = null,
+    val socks5AllowLan: Boolean = false,
+    val socks5Port: Int = 1080,
 )
 
 enum class RuntimeState {

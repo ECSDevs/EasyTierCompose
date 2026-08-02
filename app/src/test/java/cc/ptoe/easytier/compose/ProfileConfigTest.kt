@@ -71,11 +71,25 @@ class ProfileConfigTest {
 
     @Test
     fun `global settings override tun device name and no tun`() {
-        val settings = GlobalSettings(tunDeviceName = "mytun", noTun = true, socks5Proxy = "socks5://127.0.0.1:1080")
+        val settings = GlobalSettings(tunDeviceName = "mytun", noTun = true, socks5AllowLan = false, socks5Port = 1080)
         val toml = TomlConfigBuilder.build(profile(), settings)
         assertTrue(toml.contains("dev_name = \"mytun\""))
         assertTrue(toml.contains("no_tun = true"))
         assertTrue(toml.contains("socks5_proxy = \"socks5://127.0.0.1:1080\""))
+    }
+
+    @Test
+    fun `socks5 allow lan binds to wildcard`() {
+        val settings = GlobalSettings(socks5AllowLan = true, socks5Port = 1080)
+        val toml = TomlConfigBuilder.build(profile(), settings)
+        assertTrue(toml.contains("socks5_proxy = \"socks5://0.0.0.0:1080\""))
+    }
+
+    @Test
+    fun `socks5 port is reflected in toml`() {
+        val settings = GlobalSettings(socks5AllowLan = false, socks5Port = 9999)
+        val toml = TomlConfigBuilder.build(profile(), settings)
+        assertTrue(toml.contains("socks5_proxy = \"socks5://127.0.0.1:9999\""))
     }
 
     @Test
@@ -107,8 +121,8 @@ class ProfileConfigTest {
     }
 
     @Test
-    fun `validator requires socks5 when no tun is enabled`() {
-        val settings = GlobalSettings(noTun = true, socks5Proxy = null)
+    fun `validator rejects invalid socks5 port`() {
+        val settings = GlobalSettings(socks5Port = 0)
         val errors = ProfileValidator(NativeConfigParser { null }).validate(profile(), settings)
         assertTrue(errors.containsKey("globalSettings"))
     }

@@ -57,8 +57,8 @@ class ProfileValidator(private val nativeParser: NativeConfigParser = EasyTierNa
             if (!portal.clientCidr.isValidIpv4Cidr()) put("vpnPortal", "Invalid client CIDR")
             if (!portal.wireguardListen.isValidSocketAddr()) put("vpnPortal", "Invalid WireGuard listen address")
         }
-        if (globalSettings.noTun && globalSettings.socks5Proxy.isNullOrBlank()) {
-            put("globalSettings", "No-TUN mode requires a SOCKS5 proxy address")
+        if (globalSettings.socks5Port !in 1..65535) {
+            put("globalSettings", "SOCKS5 port must be between 1 and 65535")
         }
         // Final native validation of the generated TOML.
         val toml = TomlConfigBuilder.build(profile, globalSettings)
@@ -143,7 +143,8 @@ object TomlConfigBuilder {
         if (profile.ipv6PublicAddrProvider) append("ipv6_public_addr_provider = true\n")
         if (profile.ipv6PublicAddrAuto) append("ipv6_public_addr_auto = true\n")
         profile.ipv6PublicAddrPrefix?.trim()?.takeIf { it.isNotEmpty() }?.let { appendTomlString("ipv6_public_addr_prefix", it) }
-        globalSettings.socks5Proxy?.trim()?.takeIf { it.isNotEmpty() }?.let { appendTomlString("socks5_proxy", it) }
+        val socks5Host = if (globalSettings.socks5AllowLan) "0.0.0.0" else "127.0.0.1"
+        appendTomlString("socks5_proxy", "socks5://$socks5Host:${globalSettings.socks5Port}")
 
         append("\n[network_identity]\n")
         appendTomlString("network_name", profile.networkName.trim())

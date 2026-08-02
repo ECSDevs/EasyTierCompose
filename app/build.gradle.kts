@@ -1,5 +1,3 @@
-import java.util.concurrent.TimeUnit
-
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -7,28 +5,17 @@ plugins {
     id("kotlin-parcelize")
 }
 
-// Semantic version read from version.txt at the project root.
-val semanticVersion: String = run {
-    val versionFile = rootProject.file("version.txt")
-    if (versionFile.exists()) versionFile.readText().trim().ifEmpty { "0.0.0" } else "0.0.0"
-}
+// Semantic version from version.txt (configuration-cache safe: lazy provider).
+val semanticVersion: Provider<String> = providers.fileContents(
+    rootProject.layout.projectDirectory.file("version.txt")
+).asText.map { it.trim() }.filter { it.isNotEmpty() }.orElse("0.0.0")
 
-// Numeric version code derived from the total git commit count.
-val commitCount: Int = run {
-    try {
-        val process = ProcessBuilder("git", "rev-list", "--count", "HEAD")
-            .directory(rootProject.projectDir)
-            .redirectErrorStream(true)
-            .start()
-        if (process.waitFor(5, TimeUnit.SECONDS)) {
-            process.inputStream.bufferedReader().readText().trim().toIntOrNull() ?: 1
-        } else {
-            process.destroyForcibly()
-            1
-        }
-    } catch (e: Exception) {
-        1
-    }
+// Git commit count as numeric version code (configuration-cache safe:
+// providers.exec is tracked as a build input and evaluated lazily).
+val commitCount: Provider<Int> = providers.exec {
+    commandLine("git", "rev-list", "--count", "HEAD")
+}.standardOutput.asText.map {
+    it.trim().toIntOrNull()?.coerceAtLeast(1) ?: 1
 }
 
 android {
@@ -43,8 +30,10 @@ android {
         applicationId = "cc.ptoe.easytier.compose"
         minSdk = 24
         targetSdk = 36
-        versionCode = commitCount
-        versionName = semanticVersion
+        // Placeholders; real values are wired per-variant via androidComponents
+        // below so the git invocation stays configuration-cache compatible.
+        versionCode = 1
+        versionName = "0.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
@@ -77,6 +66,18 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+        }
+    }
+}
+
+// Wire versionCode (commit count) and versionName (semantic version) per-variant
+// output using lazy providers, so the build is configuration-cache compatible and
+// Android Studio / CLI share the same source of truth without extra flags.
+androidComponents {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            output.versionCode.set(commitCount)
+            output.versionName.set(semanticVersion)
         }
     }
 }

@@ -896,7 +896,7 @@ private fun ListEditorDialog(
                         }
                     },
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                     if (editingIndex != null) {
                         TextButton(onClick = { editingIndex = null; editingValue = "" }) { Text("Cancel") }
                     }
@@ -1019,7 +1019,7 @@ private fun PeerListEditorDialog(peers: List<Peer>, onDismiss: () -> Unit, onCha
                     label = { Text("Peer public key (optional)") }, singleLine = true,
                     shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth(),
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                     if (editingIndex != null) TextButton(onClick = { reset() }) { Text("Cancel") }
                     Button(onClick = { commit() }, enabled = uri.trim().isNotEmpty(), shape = MaterialTheme.shapes.medium) {
                         Icon(if (editingIndex == null) Icons.Default.Add else Icons.Default.Check, null, Modifier.size(18.dp))
@@ -1115,7 +1115,7 @@ private fun ProxyNetworkEditorDialog(networks: List<ProxyNetwork>, onDismiss: ()
                 OutlinedTextField(value = cidr, onValueChange = { cidr = it }, label = { Text("CIDR") }, singleLine = true, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(value = mappedCidr, onValueChange = { mappedCidr = it }, label = { Text("Mapped CIDR (optional)") }, singleLine = true, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(value = allow, onValueChange = { allow = it }, label = { Text("Allow (tcp,udp,icmp — comma separated)") }, singleLine = true, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth())
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                     if (editingIndex != null) TextButton(onClick = { reset() }) { Text("Cancel") }
                     Button(onClick = { commit() }, enabled = cidr.trim().isNotEmpty(), shape = MaterialTheme.shapes.medium) {
                         Icon(if (editingIndex == null) Icons.Default.Add else Icons.Default.Check, null, Modifier.size(18.dp))
@@ -1208,7 +1208,7 @@ private fun PortForwardEditorDialog(forwards: List<PortForward>, onDismiss: () -
                 OutlinedTextField(value = bindAddr, onValueChange = { bindAddr = it }, label = { Text("Bind address (host:port)") }, singleLine = true, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(value = dstAddr, onValueChange = { dstAddr = it }, label = { Text("Destination address (host:port)") }, singleLine = true, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth())
                 ChoiceRow("Protocol", proto, listOf("tcp", "udp")) { proto = it }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                     if (editingIndex != null) TextButton(onClick = { reset() }) { Text("Cancel") }
                     Button(onClick = { commit() }, enabled = bindAddr.isNotBlank() && dstAddr.isNotBlank(), shape = MaterialTheme.shapes.medium) {
                         Icon(if (editingIndex == null) Icons.Default.Add else Icons.Default.Check, null, Modifier.size(18.dp))
@@ -1266,7 +1266,7 @@ private fun SettingsScreen(
 
     var confirmReset by remember { mutableStateOf(false) }
     var tunDeviceName by remember(settings.tunDeviceName) { mutableStateOf(settings.tunDeviceName) }
-    var socks5Proxy by remember(settings.socks5Proxy) { mutableStateOf(settings.socks5Proxy.orEmpty()) }
+    var socks5Port by remember(settings.socks5Port) { mutableStateOf(settings.socks5Port.toString()) }
 
     LazyColumn(verticalArrangement = Arrangement.spacedBy(20.dp)) {
         item {
@@ -1305,29 +1305,36 @@ private fun SettingsScreen(
                         shape = MaterialTheme.shapes.medium,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    SwitchRow("No TUN (requires SOCKS5)", settings.noTun) { checked ->
+                    SwitchRow("No TUN", settings.noTun) { checked ->
                         onGlobalSettings(settings.copy(noTun = checked))
                     }
+                    SwitchRow("SOCKS5 allow LAN", settings.socks5AllowLan) { checked ->
+                        onGlobalSettings(settings.copy(socks5AllowLan = checked))
+                    }
                     OutlinedTextField(
-                        value = socks5Proxy,
-                        onValueChange = { socks5Proxy = it },
-                        label = { Text("SOCKS5 proxy address") },
+                        value = socks5Port,
+                        onValueChange = { socks5Port = it.filter { c -> c.isDigit() }.take(5) },
+                        label = { Text("SOCKS5 port") },
                         singleLine = true,
                         shape = MaterialTheme.shapes.medium,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    if (settings.noTun && socks5Proxy.isBlank()) {
-                        Text("No-TUN mode requires a SOCKS5 proxy address", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    val portValid = socks5Port.toIntOrNull() in 1..65535
+                    if (!portValid) {
+                        Text("Port must be between 1 and 65535", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                     }
-                    Button(
-                        onClick = {
-                            onGlobalSettings(settings.copy(
-                                tunDeviceName = tunDeviceName.trim().ifBlank { "easytier0" },
-                                socks5Proxy = socks5Proxy.trim().ifBlank { null },
-                            ))
-                        },
-                        shape = MaterialTheme.shapes.medium,
-                    ) { Text("Save global settings") }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        Button(
+                            onClick = {
+                                onGlobalSettings(settings.copy(
+                                    tunDeviceName = tunDeviceName.trim().ifBlank { "easytier0" },
+                                    socks5Port = socks5Port.toIntOrNull()?.takeIf { it in 1..65535 } ?: 1080,
+                                ))
+                            },
+                            enabled = portValid,
+                            shape = MaterialTheme.shapes.medium,
+                        ) { Text("Save") }
+                    }
                 }
             }
         }

@@ -47,6 +47,7 @@ class EasyTierViewModel(
         draft,
         coordinator.status,
         errors,
+        globalSettings,
     ) { values ->
         @Suppress("UNCHECKED_CAST")
         val profiles = values[0] as List<EasyTierProfile>
@@ -55,7 +56,8 @@ class EasyTierViewModel(
         val editing = values[3] as EasyTierProfile?
         val runtime = values[4] as RuntimeStatus
         val fieldErrors = values[5] as Map<String, String>
-        EasyTierUiState(profiles, localSelection ?: persistedSelection ?: profiles.firstOrNull()?.id, editing, runtime, fieldErrors, globalSettings.value)
+        val settings = values[6] as GlobalSettings
+        EasyTierUiState(profiles, localSelection ?: persistedSelection ?: profiles.firstOrNull()?.id, editing, runtime, fieldErrors, settings)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), EasyTierUiState())
 
     init {

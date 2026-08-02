@@ -84,13 +84,15 @@ class ProfileRepository(private val context: Context) {
 class GlobalSettingsRepository(private val context: Context) {
     private val tunDeviceNameKey = stringPreferencesKey("tun_device_name")
     private val noTunKey = booleanPreferencesKey("no_tun")
-    private val socks5ProxyKey = stringPreferencesKey("socks5_proxy")
+    private val socks5AllowLanKey = booleanPreferencesKey("socks5_allow_lan")
+    private val socks5PortKey = stringPreferencesKey("socks5_port")
 
     val settings: Flow<GlobalSettings> = context.easyTierGlobalSettingsDataStore.data.map { preferences ->
         GlobalSettings(
             tunDeviceName = preferences[tunDeviceNameKey] ?: "easytier0",
             noTun = preferences[noTunKey] ?: false,
-            socks5Proxy = preferences[socks5ProxyKey]?.takeIf { it.isNotEmpty() },
+            socks5AllowLan = preferences[socks5AllowLanKey] ?: false,
+            socks5Port = preferences[socks5PortKey]?.toIntOrNull() ?: 1080,
         )
     }
 
@@ -98,11 +100,8 @@ class GlobalSettingsRepository(private val context: Context) {
         context.easyTierGlobalSettingsDataStore.edit { preferences ->
             preferences[tunDeviceNameKey] = settings.tunDeviceName
             preferences[noTunKey] = settings.noTun
-            if (settings.socks5Proxy.isNullOrEmpty()) {
-                preferences.remove(socks5ProxyKey)
-            } else {
-                preferences[socks5ProxyKey] = settings.socks5Proxy
-            }
+            preferences[socks5AllowLanKey] = settings.socks5AllowLan
+            preferences[socks5PortKey] = settings.socks5Port.toString()
         }
     }
 }
