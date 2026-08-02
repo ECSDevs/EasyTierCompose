@@ -70,10 +70,10 @@ if (-not $Version -and $bumpFlags.Count -gt 1) {
 
 # --- helpers ---------------------------------------------------------------
 
-function Invoke-Git([string[]]$Args) {
-    & git @Args
+function Invoke-Git([string[]]$GitArgs) {
+    & git @GitArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "git $($Args -join ' ') failed with exit code $LASTEXITCODE."
+        throw "git $($GitArgs -join ' ') failed with exit code $LASTEXITCODE."
     }
 }
 
