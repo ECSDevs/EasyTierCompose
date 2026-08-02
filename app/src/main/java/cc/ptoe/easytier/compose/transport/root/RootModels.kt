@@ -10,6 +10,7 @@ data class RootTunSpec(
     val manualRoutes: List<String>,
     val proxyCidrs: List<String>,
     val devName: String,
+    val magicDns: Boolean,
 ) : Parcelable {
     constructor(parcel: Parcel) : this(
         parcel.readString(),
@@ -17,6 +18,7 @@ data class RootTunSpec(
         buildList { parcel.readStringList(this) },
         buildList { parcel.readStringList(this) },
         parcel.readString().orEmpty(),
+        parcel.createBooleanArray()?.firstOrNull() ?: false,
     )
 
     override fun writeToParcel(parcel: Parcel, flags: Int) {
@@ -25,6 +27,7 @@ data class RootTunSpec(
         parcel.writeStringList(manualRoutes)
         parcel.writeStringList(proxyCidrs)
         parcel.writeString(devName)
+        parcel.writeBooleanArray(booleanArrayOf(magicDns))
     }
 
     override fun describeContents() = 0
@@ -40,14 +43,22 @@ data class RootRuntimeStatus(
     val virtualIpv4: String?,
     val tunDevice: String?,
     val error: String?,
+    val peersJson: String? = null,
 ) : Parcelable {
-    constructor(parcel: Parcel) : this(parcel.readString().orEmpty(), parcel.readString(), parcel.readString(), parcel.readString())
+    constructor(parcel: Parcel) : this(
+        parcel.readString().orEmpty(),
+        parcel.readString(),
+        parcel.readString(),
+        parcel.readString(),
+        parcel.readString(),
+    )
 
     override fun writeToParcel(parcel: Parcel, flags: Int) {
         parcel.writeString(state)
         parcel.writeString(virtualIpv4)
         parcel.writeString(tunDevice)
         parcel.writeString(error)
+        parcel.writeString(peersJson)
     }
 
     override fun describeContents() = 0

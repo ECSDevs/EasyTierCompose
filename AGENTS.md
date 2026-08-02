@@ -61,7 +61,7 @@ EasyTierCompose 是一个单 Activity 的 Jetpack Compose Android 应用，封�
 
 ### core 层
 - [EasyTierJni.kt](app/src/main/java/cc/ptoe/easytier/compose/core/EasyTierJni.kt) — 应用拥有的 JNI 门面（facade）。**应用代码统一使用此类，禁止直接调用 `com.easytier.jni.EasyTierJNI`。**
-- [EasyTierRuntimeCoordinator.kt](app/src/main/java/cc/ptoe/easytier/compose/core/EasyTierRuntimeCoordinator.kt) — 运行时编排器。`SupervisorJob + Dispatchers.IO` 协程域，`Mutex` 串行化 start/stop，持有 `VpnTunTransport` 与 `RootTunTransport`，轮询 `collectNetworkInfos` 解析虚拟 IPv4 与路由。
+- [EasyTierRuntimeCoordinator.kt](app/src/main/java/cc/ptoe/easytier/compose/core/EasyTierRuntimeCoordinator.kt) — 运行时编排器。`SupervisorJob + Dispatchers.IO` 协程域，`Mutex` 串行化 start/stop，持有 `VpnTunTransport` 与 `RootTunTransport`，轮询 `collectNetworkInfos` 解析虚拟 IPv4、路由与 Peer 列表（VPN_SERVICE 直接在 app 进程轮询；ROOT_TUN 通过 AIDL 收集 `RootTunTransport.status` flow）。
 - [ProfileConfig.kt](app/src/main/java/cc/ptoe/easytier/compose/core/ProfileConfig.kt) — `ProfileValidator`（字段校验 + 高级 TOML 的原生解析）、`TomlConfigBuilder`（结构化 profile → TOML）、`NativeConfigParser` / `EasyTierNativeConfigParser`。
 
 ### data 层
@@ -74,8 +74,8 @@ EasyTierCompose 是一个单 Activity 的 Jetpack Compose Android 应用，封�
   - [VpnTunTransport.kt](app/src/main/java/cc/ptoe/easytier/compose/transport/vpn/VpnTunTransport.kt) — VPN 权限申请流，处理 pending start。
   - [EasyTierVpnService.kt](app/src/main/java/cc/ptoe/easytier/compose/transport/vpn/EasyTierVpnService.kt) — `VpnService` 前台服务（`foregroundServiceType="specialUse"`），通过 `Builder()` 建立 tun，调用 `EasyTierJni.setTunFd`。
 - `transport/root/`：
-  - [RootTunTransport.kt](app/src/main/java/cc/ptoe/easytier/compose/transport/root/RootTunTransport.kt) — 通过 libsu `RootService.bind` IPC 连接 root 进程，轮询 `getStatus()`。
-  - [EasyTierRootService.kt](app/src/main/java/cc/ptoe/easytier/compose/transport/root/EasyTierRootService.kt) — `RootService`，在 root 进程内运行 EasyTier + 创建真实 `easytier0` 接口，轮询 DHCP。
+  - [RootTunTransport.kt](app/src/main/java/cc/ptoe/easytier/compose/transport/root/RootTunTransport.kt) — 通过 libsu `RootService.bind` IPC 连接 root 进程，启动后持续轮询 `getStatus()` 并解析 `peersJson` 为 `List<RuntimePeer>`。
+  - [EasyTierRootService.kt](app/src/main/java/cc/ptoe/easytier/compose/transport/root/EasyTierRootService.kt) — `RootService`，在 root 进程内运行 EasyTier + 创建真实 `easytier0` 接口，轮询 DHCP；RUNNING 后持续轮询 `collectNetworkInfos` 更新 Peer 列表；Magic DNS 时通过 `settings put global dns1/dns2` 切换系统 DNS。
   - [RootTunNative.kt](app/src/main/java/cc/ptoe/easytier/compose/transport/root/RootTunNative.kt) — 加载 `libroot_tun_jni`，提供 `create` / `syncRoutes` / `destroy`。
   - [RootModels.kt](app/src/main/java/cc/ptoe/easytier/compose/transport/root/RootModels.kt) — `RootTunSpec`、`RootRuntimeStatus`（`Parcelable`，AIDL 载荷）。
 
@@ -99,7 +99,7 @@ EasyTierCompose 是一个单 Activity 的 Jetpack Compose Android 应用，封�
 | 实现 | `VpnService.Builder` | `/dev/net/tun` + netlink（root 进程） |
 | 权限 | 系统 VPN 授权弹窗 | root（libsu RootService IPC） |
 | 前台服务 | `specialUse` | 否（root 进程内运行） |
-| Magic DNS | 支持（`100.100.100.101`） | 不支持 |
+| Magic DNS | 支持（`100.100.100.101`） | 支持（root 进程内运行 + `settings put global dns1` 切换系统 DNS） |
 | 高级 TOML | 支持 | 不支持（校验阶段即拒绝） |
 | 设备名 | Android VPN（虚拟） | `easytier0`（真实接口） |
 
@@ -110,9 +110,9 @@ EasyTierCompose 是一个单 Activity 的 Jetpack Compose Android 应用，封�
 `TomlConfigBuilder` 生成的结构化 TOML 关键字段：`instance_name`（= profile.id）、`dhcp`、`ipv4`、`listeners`、`routes`、`[[peer]] uri`、`[network_identity]` network_name/network_secret、`[[proxy_network]] cidr`、`[flags]` dev_name（固定 `easytier0`）/ `no_tun=false` / `mtu` / `accept_dns`。
 
 - MTU 默认 1380，有效区间 576..9000。
-- `accept_dns` 仅在 VPN_SERVICE 模式且开启 Magic DNS 时为 true。
+- `accept_dns` 在开启 Magic DNS 时为 true（VPN_SERVICE 与 ROOT_TUN 均支持）。ROOT_TUN 模式下，`EasyTierRootService` 额外通过 root shell 执行 `settings put global dns1/dns2 100.100.100.101` 切换系统 DNS，并在停止时恢复原值。
 - 高级 TOML 模式直接透传用户输入，跳过结构化生成，但仍经原生 `parseConfig` 校验。
-- 轮询 `collectNetworkInfos` 返回的 JSON 中，`my_node_info.virtual_ipv4` 为 `{address:{addr:<u32 big-endian>}, network_length:<u32>}`，需按大端拆解为点分十进制（见 `EasyTierRootService` 的 `ipv4InetToCidr`）。
+- 轮询 `collectNetworkInfos` 返回的 JSON 中，`my_node_info.virtual_ipv4` 为 `{address:{addr:<u32 big-endian>}, network_length:<u32>}`，需按大端拆解为点分十进制（见 `EasyTierRuntimeCoordinator` 的 `ipv4InetToCidr`）。
 
 ## 关键约定与约束
 
@@ -128,7 +128,7 @@ EasyTierCompose 是一个单 Activity 的 Jetpack Compose Android 应用，封�
 
 ## 测试
 
-- 单元测试 [ProfileConfigTest.kt](app/src/test/java/cc/ptoe/easytier/compose/ProfileConfigTest.kt) 覆盖：结构化 TOML 生成、DHCP、Root TUN 抑制 Magic DNS、高级 TOML 透传、字段校验。测试通过注入 `NativeConfigParser` 桩绕过真实 JNI。
+- 单元测试 [ProfileConfigTest.kt](app/src/test/java/cc/ptoe/easytier/compose/ProfileConfigTest.kt) 覆盖：结构化 TOML 生成、DHCP、Root TUN 支持 Magic DNS、字段校验。测试通过注入 `NativeConfigParser` 桩绕过真实 JNI。
 - 修改 `ProfileConfig.kt` 或 `EasyTierModels.kt` 后应运行 `./gradlew :app:testDebugUnitTest`。
 - instrumented 测试（`ExampleInstrumentedTest`）为占位。
 

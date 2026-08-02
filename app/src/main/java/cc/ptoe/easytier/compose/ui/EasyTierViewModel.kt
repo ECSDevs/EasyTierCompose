@@ -96,9 +96,9 @@ class EasyTierViewModel(
     fun updateTunMode(mode: TunMode) = viewModelScope.launch {
         val profile = selectedProfile() ?: return@launch
         if (state.value.runtime.state in setOf(RuntimeState.STARTING, RuntimeState.RUNNING)) return@launch
-        val updated = profile.copy(tunMode = mode, enableMagicDns = profile.enableMagicDns && mode == TunMode.VPN_SERVICE)
+        val updated = profile.copy(tunMode = mode)
         repository.save(updated)
-        draft.value = draft.value?.takeIf { it.id == updated.id }?.copy(tunMode = mode, enableMagicDns = updated.enableMagicDns)
+        draft.value = draft.value?.takeIf { it.id == updated.id }?.copy(tunMode = mode)
     }
 
     fun updateGlobalSettings(settings: GlobalSettings) = viewModelScope.launch {

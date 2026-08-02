@@ -64,9 +64,21 @@ class ProfileConfigTest {
     }
 
     @Test
-    fun `root tun suppresses structured magic dns`() {
+    fun `root tun supports magic dns`() {
         val toml = TomlConfigBuilder.build(profile(mode = TunMode.ROOT_TUN))
-        assertTrue(toml.contains("accept_dns = false"))
+        assertTrue(toml.contains("accept_dns = true"))
+    }
+
+    @Test
+    fun `root tun spec carries magic dns flag`() {
+        val spec = TomlConfigBuilder.rootTunSpec(profile(mode = TunMode.ROOT_TUN))
+        assertTrue(spec.magicDns)
+    }
+
+    @Test
+    fun `root tun spec carries magic dns disabled`() {
+        val spec = TomlConfigBuilder.rootTunSpec(profile(mode = TunMode.ROOT_TUN).copy(enableMagicDns = false))
+        assertFalse(spec.magicDns)
     }
 
     @Test

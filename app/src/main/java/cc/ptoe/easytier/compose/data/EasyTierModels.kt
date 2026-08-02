@@ -143,6 +143,24 @@ enum class RuntimeState {
     ERROR,
 }
 
+/**
+ * Snapshot of a remote peer observed via collectNetworkInfos.
+ *
+ * List display shows only [hostname], [virtualIpv4] and [latencyMs];
+ * the remaining fields are surfaced in a details dialog.
+ */
+@Serializable
+data class RuntimePeer(
+    val hostname: String,
+    val virtualIpv4: String?,
+    val latencyMs: Double?,
+    val connectionType: String,
+    val tunnelProtos: List<String>,
+    val lossRate: Double?,
+    val natType: String,
+    val cost: Int,
+)
+
 data class RuntimeStatus(
     val state: RuntimeState,
     val profileId: String?,
@@ -150,6 +168,7 @@ data class RuntimeStatus(
     val virtualIpv4: String?,
     val tunDevice: String?,
     val error: String?,
+    val peers: List<RuntimePeer> = emptyList(),
 ) {
     companion object {
         val Stopped = RuntimeStatus(RuntimeState.STOPPED, null, null, null, null, null)

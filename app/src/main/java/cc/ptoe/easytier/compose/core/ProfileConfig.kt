@@ -214,7 +214,7 @@ object TomlConfigBuilder {
         append("disable_relay_kcp = ${profile.disableRelayKcp}\n")
         append("enable_relay_foreign_network_kcp = ${profile.enableRelayForeignNetworkKcp}\n")
         append("proxy_forward_by_system = ${profile.proxyForwardBySystem}\n")
-        append("accept_dns = ${profile.enableMagicDns && profile.tunMode == TunMode.VPN_SERVICE}\n")
+        append("accept_dns = ${profile.enableMagicDns}\n")
         append("private_mode = ${profile.privateMode}\n")
         append("enable_quic_proxy = ${profile.enableQuicProxy}\n")
         append("disable_quic_input = ${profile.disableQuicInput}\n")
@@ -237,6 +237,7 @@ object TomlConfigBuilder {
         manualRoutes = profile.manualRoutes.map(String::trim),
         proxyCidrs = profile.proxyNetworks.map { it.cidr.trim() },
         devName = globalSettings.tunDeviceName.trim().ifBlank { "easytier0" },
+        magicDns = profile.enableMagicDns,
     )
 
     private fun StringBuilder.appendTomlArray(key: String, values: List<String>) {
