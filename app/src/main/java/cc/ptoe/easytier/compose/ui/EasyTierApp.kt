@@ -287,8 +287,8 @@ private fun DashboardScreen(
             StatusDetailsGroup(
                 networkName = profile?.networkName,
                 virtualIpv4 = state.runtime.virtualIpv4,
-                tunDevice = state.runtime.tunDevice,
-                tunMode = profile?.tunMode,
+                hostname = state.runtime.hostname,
+                natType = state.runtime.natType,
                 statusState = state.runtime.state,
                 error = state.runtime.error,
             )
@@ -393,8 +393,8 @@ private fun StatusCard(
 private fun StatusDetailsGroup(
     networkName: String?,
     virtualIpv4: String?,
-    tunDevice: String?,
-    tunMode: TunMode?,
+    hostname: String?,
+    natType: String?,
     statusState: RuntimeState,
     error: String?,
 ) {
@@ -415,14 +415,14 @@ private fun StatusDetailsGroup(
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         StatusDetailRow(
             icon = Icons.Default.AdminPanelSettings,
-            title = "TUN Device",
-            value = tunDevice,
+            title = "Hostname",
+            value = hostname,
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         StatusDetailRow(
             icon = Icons.Default.VpnKey,
-            title = "TUN Mode",
-            value = tunMode?.let { if (it == TunMode.VPN_SERVICE) "VPN Service" else "Root TUN" },
+            title = "NAT type",
+            value = natType,
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         StatusDetailRow(

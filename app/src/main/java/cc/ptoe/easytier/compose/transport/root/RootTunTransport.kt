@@ -109,7 +109,7 @@ class RootTunTransport(private val context: Context) : RuntimeTransport {
         val peers = peersJson?.takeIf(String::isNotBlank)?.let { json ->
             runCatching { Json.decodeFromString(ListSerializer(RuntimePeer.serializer()), json) }.getOrDefault(emptyList())
         }.orEmpty()
-        return RuntimeStatus(state, profile.id, profile.tunMode, virtualIpv4, tunDevice, error, peers)
+        return RuntimeStatus(state, profile.id, profile.tunMode, virtualIpv4, tunDevice, error, peers, hostname, natType)
     }
 
     private fun error(profile: EasyTierProfile, message: String): RuntimeStatus =

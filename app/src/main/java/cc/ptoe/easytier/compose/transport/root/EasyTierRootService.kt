@@ -136,7 +136,7 @@ class EasyTierRootService : RootService() {
                     null
                 }
                 val status = currentStatus.get()
-                currentStatus.set(status.copy(peersJson = peersJson))
+                currentStatus.set(status.copy(peersJson = peersJson, hostname = info.hostname, natType = info.natType))
             }.onFailure {
                 Log.e(TAG, "pollStatus failed", it)
             }

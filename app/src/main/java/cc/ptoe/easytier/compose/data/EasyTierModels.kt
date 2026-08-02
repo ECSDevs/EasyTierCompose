@@ -169,6 +169,8 @@ data class RuntimeStatus(
     val tunDevice: String?,
     val error: String?,
     val peers: List<RuntimePeer> = emptyList(),
+    val hostname: String? = null,
+    val natType: String? = null,
 ) {
     companion object {
         val Stopped = RuntimeStatus(RuntimeState.STOPPED, null, null, null, null, null)

@@ -44,9 +44,13 @@ data class RootRuntimeStatus(
     val tunDevice: String?,
     val error: String?,
     val peersJson: String? = null,
+    val hostname: String? = null,
+    val natType: String? = null,
 ) : Parcelable {
     constructor(parcel: Parcel) : this(
         parcel.readString().orEmpty(),
+        parcel.readString(),
+        parcel.readString(),
         parcel.readString(),
         parcel.readString(),
         parcel.readString(),
@@ -59,6 +63,8 @@ data class RootRuntimeStatus(
         parcel.writeString(tunDevice)
         parcel.writeString(error)
         parcel.writeString(peersJson)
+        parcel.writeString(hostname)
+        parcel.writeString(natType)
     }
 
     override fun describeContents() = 0

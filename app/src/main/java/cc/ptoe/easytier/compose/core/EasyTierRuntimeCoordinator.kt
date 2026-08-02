@@ -2,6 +2,8 @@ package cc.ptoe.easytier.compose.core
 
 import android.app.Activity
 import android.content.Context
+import android.os.Build
+import android.provider.Settings
 import cc.ptoe.easytier.compose.data.EasyTierProfile
 import cc.ptoe.easytier.compose.data.GlobalSettings
 import cc.ptoe.easytier.compose.data.RuntimePeer
@@ -33,7 +35,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-class EasyTierRuntimeCoordinator(context: Context, activity: Activity) {
+class EasyTierRuntimeCoordinator(private val context: Context, activity: Activity) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutex = Mutex()
     private val vpn = VpnTunTransport(context, activity)
@@ -50,15 +52,18 @@ class EasyTierRuntimeCoordinator(context: Context, activity: Activity) {
     }
 
     suspend fun start(profile: EasyTierProfile, globalSettings: GlobalSettings = GlobalSettings()): RuntimeStatus = mutex.withLock {
-        val errors = ProfileValidator().validate(profile, globalSettings)
-        if (errors.isNotEmpty()) return@withLock failure(profile, errors.values.first())
-        val toml = TomlConfigBuilder.build(profile, globalSettings)
+        // Auto-fill hostname from the Android device name when the profile leaves it blank,
+        // so peers see a recognizable identity without forcing the user to configure it.
+        val effectiveProfile = profile.withDeviceHostnameIfBlank(context)
+        val errors = ProfileValidator().validate(effectiveProfile, globalSettings)
+        if (errors.isNotEmpty()) return@withLock failure(effectiveProfile, errors.values.first())
+        val toml = TomlConfigBuilder.build(effectiveProfile, globalSettings)
         stopLocked()
-        activeProfile = profile
-        mutableStatus.value = RuntimeStatus(RuntimeState.STARTING, profile.id, profile.tunMode, null, null, null)
-        return@withLock when (profile.tunMode) {
-            TunMode.VPN_SERVICE -> startVpn(profile, toml, globalSettings)
-            TunMode.ROOT_TUN -> startRoot(profile, toml, globalSettings)
+        activeProfile = effectiveProfile
+        mutableStatus.value = RuntimeStatus(RuntimeState.STARTING, effectiveProfile.id, effectiveProfile.tunMode, null, null, null)
+        return@withLock when (effectiveProfile.tunMode) {
+            TunMode.VPN_SERVICE -> startVpn(effectiveProfile, toml, globalSettings)
+            TunMode.ROOT_TUN -> startRoot(effectiveProfile, toml, globalSettings)
         }
     }
 
@@ -122,7 +127,9 @@ class EasyTierRuntimeCoordinator(context: Context, activity: Activity) {
                     }
                     if (!info.virtualIpv4.isNullOrBlank()) {
                         val status = vpn.establishWhenResolved(profile, info.virtualIpv4, info.routes)
-                        mutableStatus.value = status.copy(peers = info.peers)
+                        mutableStatus.value = status.copy(peers = info.peers, hostname = info.hostname, natType = info.natType)
+                    } else {
+                        mutableStatus.value = mutableStatus.value.copy(hostname = info.hostname, natType = info.natType)
                     }
                 }
                 delay(2_000)
@@ -141,14 +148,24 @@ class EasyTierRuntimeCoordinator(context: Context, activity: Activity) {
     private fun nativeError(fallback: String) = EasyTierJni.getLastError() ?: fallback
 }
 
-data class NetworkInfo(val virtualIpv4: String?, val routes: List<String>, val error: String?, val peers: List<RuntimePeer>)
+data class NetworkInfo(
+    val virtualIpv4: String?,
+    val routes: List<String>,
+    val error: String?,
+    val peers: List<RuntimePeer>,
+    val hostname: String?,
+    val natType: String?,
+)
 
 /** Parses the JSON returned by [EasyTierJni.collectNetworkInfos] for a specific profile instance. */
 fun String.networkInfo(profileId: String): NetworkInfo? = runCatching {
     val map = Json.parseToJsonElement(this).jsonObject["map"]?.jsonObject ?: return null
     val info = map[profileId]?.jsonObject ?: return null
     val error = info["error_msg"]?.jsonPrimitive?.content
-    val virtual = info["my_node_info"]?.jsonObject?.get("virtual_ipv4")?.jsonObject?.let(::ipv4InetToCidr)
+    val myNode = info["my_node_info"]?.jsonObject
+    val virtual = myNode?.get("virtual_ipv4")?.jsonObject?.let(::ipv4InetToCidr)
+    val hostname = myNode?.get("hostname")?.jsonPrimitive?.content?.takeIf(String::isNotBlank)
+    val natType = myNode?.get("stun_info")?.jsonObject?.get("udp_nat_type")?.let(::natTypeName)
     // Each route entry advertises proxy_cidrs (repeated string of CIDRs like "192.168.0.0/16").
     // Those are the remote networks reachable via peers — the kernel routes we need on the TUN.
     val routes = (info["routes"] as? JsonArray)?.flatMap { route ->
@@ -157,7 +174,7 @@ fun String.networkInfo(profileId: String): NetworkInfo? = runCatching {
         } ?: emptyList()
     }?.distinct()?.sorted() ?: emptyList()
     val peers = info["peer_route_pairs"]?.jsonArray?.mapNotNull { it.peerRoutePair() }.orEmpty()
-    NetworkInfo(virtual, routes, error, peers)
+    NetworkInfo(virtual, routes, error, peers, hostname, natType)
 }.getOrNull()
 
 // peer_route_pairs entries combine a Route (hostname, ipv4, cost, latency, NAT) with a Peer
@@ -225,3 +242,22 @@ fun natTypeName(raw: JsonElement?): String {
 // tunnel_type may be a bare scheme ("tcp") or a full URL ("tcp://1.2.3.4:11010"); keep the scheme.
 fun normalizeTunnelType(raw: String): String =
     raw.substringBefore("://").ifBlank { raw }
+
+/**
+ * Returns [EasyTierProfile.hostname] when set, otherwise fills it from the Android device name
+ * (Settings.Global.DEVICE_NAME, falling back to Build.MODEL). The result is normalized to match
+ * EasyTier Core's `get_hostname`: ISO control characters are stripped and the value is capped at
+ * 32 characters. Returns the original profile unchanged when a non-blank hostname is already
+ * present or no device name can be resolved.
+ */
+fun EasyTierProfile.withDeviceHostnameIfBlank(context: Context): EasyTierProfile {
+    val current = hostname?.trim()
+    if (!current.isNullOrEmpty()) return this
+    val raw = Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)
+        ?.trim()?.takeIf { it.isNotEmpty() }
+        ?: Build.MODEL.trim().takeIf { it.isNotEmpty() }
+        ?: return this
+    val normalized = raw.filter { !it.isISOControl() }.take(32).trim()
+    if (normalized.isEmpty()) return this
+    return copy(hostname = normalized)
+}
