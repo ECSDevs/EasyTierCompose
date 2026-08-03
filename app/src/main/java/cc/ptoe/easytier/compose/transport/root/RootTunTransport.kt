@@ -60,19 +60,71 @@ class RootTunTransport(private val context: Context) : RuntimeTransport {
                     return status
                 }
             }
+            // Timed out — stop the daemon so the root process doesn't linger in the
+            // background. Without this the daemon stays bound and running (still in
+            // STARTING), leaving no way for the user to disconnect from the ERROR state.
+            stop()
             error(profile, "Root helper start timed out")
-        }.getOrElse { error(profile, it.message ?: "Root helper disconnected") }
+        }.getOrElse {
+            stop()
+            error(profile, it.message ?: "Root helper disconnected")
+        }
+    }
+
+    /**
+     * Attempts to attach to an existing daemon root service left running by a previous
+     * app process (orphan process). Binds to the daemon and queries its status.
+     *
+     * @return the daemon's [RootRuntimeStatus] if an EasyTier instance is running or
+     *  starting; `null` if the daemon is fresh/stopped (no orphan to adopt). When
+     *  `null` is returned the transport unbinds so the daemon can exit on its own.
+     *  On a non-null return the transport stays bound and the caller should invoke
+     *  [adopt] with the matched profile to begin polling.
+     */
+    suspend fun attach(): RootRuntimeStatus? {
+        val remote = bind() ?: return null
+        val root = remote.status
+        val state = runCatching { RuntimeState.valueOf(root.state) }.getOrDefault(RuntimeState.STOPPED)
+        if (state == RuntimeState.STOPPED || state == RuntimeState.ERROR) {
+            // No orphan — unbind so the daemon process can exit.
+            unbindInternal()
+            return null
+        }
+        return root
+    }
+
+    /**
+     * Adopts an orphaned daemon root service with the matched profile. Sets the
+     * active profile, publishes the current status, and begins polling for
+     * status updates. The transport must already be bound (via [attach]).
+     */
+    fun adopt(root: RootRuntimeStatus, profile: EasyTierProfile): RuntimeStatus {
+        activeProfile = profile
+        val status = root.toRuntimeStatus(profile)
+        mutableStatus.value = status
+        if (status.state == RuntimeState.RUNNING || status.state == RuntimeState.STARTING) {
+            pollRoot(profile)
+        }
+        return status
     }
 
     override suspend fun stop() {
         pollJob?.cancel()
         pollJob = null
+        // Ask the daemon to stop EasyTier + clean up + stopSelf (exits the daemon process).
         runCatching { service?.stop() }
+        // Give the root process a brief moment to run stopRoot() before unbinding,
+        // so stopSelf() can take effect and the daemon exits cleanly.
+        delay(300)
+        unbindInternal()
+        activeProfile = null
+        mutableStatus.value = RuntimeStatus.Stopped
+    }
+
+    private fun unbindInternal() {
         if (bound) RootService.unbind(connection)
         bound = false
         service = null
-        activeProfile = null
-        mutableStatus.value = RuntimeStatus.Stopped
     }
 
     private fun pollRoot(profile: EasyTierProfile) {
@@ -89,11 +141,21 @@ class RootTunTransport(private val context: Context) : RuntimeTransport {
         }
     }
 
+    /**
+     * Intent used to bind to the root service. Always uses [RootService.CATEGORY_DAEMON_MODE]
+     * so the root process runs independently from the app lifecycle: when the app is
+     * killed the daemon keeps EasyTier running, and on the next app launch [attach]
+     * can reconnect to the same daemon process.
+     */
+    private fun daemonIntent(): Intent =
+        Intent(context, EasyTierRootService::class.java)
+            .addCategory(RootService.CATEGORY_DAEMON_MODE)
+
     private suspend fun bind(): IEasyTierRootService? {
         service?.let { return it }
         return withTimeoutOrNull(15_000) {
             suspendCancellableCoroutine { continuation ->
-                RootService.bind(Intent(context, EasyTierRootService::class.java), connection)
+                RootService.bind(daemonIntent(), connection)
                 bound = true
                 Thread {
                     while (service == null && continuation.isActive) Thread.sleep(50)
@@ -109,7 +171,11 @@ class RootTunTransport(private val context: Context) : RuntimeTransport {
         val peers = peersJson?.takeIf(String::isNotBlank)?.let { json ->
             runCatching { Json.decodeFromString(ListSerializer(RuntimePeer.serializer()), json) }.getOrDefault(emptyList())
         }.orEmpty()
-        return RuntimeStatus(state, profile.id, profile.tunMode, virtualIpv4, tunDevice, error, peers, hostname, natType)
+        // Prefer the profileId reported by the daemon (matches the running instance);
+        // fall back to the caller-supplied profile for the start flow where the daemon
+        // hasn't reported yet.
+        val effectiveProfileId = profileId ?: profile.id
+        return RuntimeStatus(state, effectiveProfileId, profile.tunMode, virtualIpv4, tunDevice, error, peers, hostname, natType)
     }
 
     private fun error(profile: EasyTierProfile, message: String): RuntimeStatus =

@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -64,6 +65,13 @@ class EasyTierViewModel(
         viewModelScope.launch { coordinator.effects.collect { effects.emit(it) } }
         viewModelScope.launch {
             globalSettingsRepository.settings.collect { globalSettings.value = it }
+        }
+        // On app launch, try to adopt a root daemon orphaned by a previous process
+        // (Root TUN mode runs in a libsu daemon process that survives app death).
+        // Wait for profiles to load first so we can match the orphan's profileId.
+        viewModelScope.launch {
+            val profiles = repository.profiles.first()
+            coordinator.attachOrphanRoot { id -> profiles.firstOrNull { it.id == id } }
         }
     }
 

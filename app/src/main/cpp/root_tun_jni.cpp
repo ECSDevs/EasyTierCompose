@@ -12,6 +12,7 @@
 #include <net/if.h>
 #include <stdexcept>
 #include <string>
+#include <sched.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -343,4 +344,113 @@ extern "C" JNIEXPORT void JNICALL
 Java_cc_ptoe_easytier_compose_transport_root_RootTunNative_destroy(JNIEnv*, jobject) {
     LOGI("destroy: called");
     destroyInterface();
+}
+
+// Moves the calling process into a brand-new, anonymous network namespace
+// (CLONE_NEWNET). Called by EasyTierRootService after the main-namespace TUN
+// (easytier0) and veth bridge have been set up: once unshare succeeds, every
+// subsequent socket EasyTier creates is confined to this namespace, so
+// getifaddrs/NetworkInterface::show no longer enumerate mihomo/VpnService
+// TUNs and EasyTier's outbound traffic is forced through the veth pair.
+//
+// Returns 0 on success, or a negative errno on failure.
+extern "C" JNIEXPORT jint JNICALL
+Java_cc_ptoe_easytier_compose_transport_root_RootTunNative_unshareNetwork(JNIEnv*, jobject) {
+    if (unshare(CLONE_NEWNET) != 0) {
+        int err = errno;
+        LOGE("unshareNetwork: unshare(CLONE_NEWNET) failed: %s (errno=%d)", std::strerror(err), err);
+        return -err;
+    }
+    LOGI("unshareNetwork: process moved into new network namespace");
+    return 0;
+}
+
+// Pulls interface `iface` from the main network namespace (PID 1's netns) into
+// the caller's current network namespace. The daemon calls this after
+// unshare(CLONE_NEWNET): the function opens /proc/1/ns/net and
+// /proc/self/ns/net, temporarily setns into the main namespace so it can see
+// the interface, sends an RTM_SETLINK with IFLA_NET_NS_PID = getpid() to
+// relocate the interface into the caller's (isolated) namespace, then setns
+// back to the caller's namespace.
+//
+// This bypasses Android's toybox `ip link set ... netns <pid>`, which silently
+// no-ops because toybox treats the argument as a named netns under
+// /var/run/netns/ rather than a PID.
+//
+// Returns 0 on success, or a negative errno on failure.
+extern "C" JNIEXPORT jint JNICALL
+Java_cc_ptoe_easytier_compose_transport_root_RootTunNative_pullInterfaceFromMainNs(
+    JNIEnv* env, jobject, jstring iface) {
+    if (iface == nullptr) return -EINVAL;
+    const char* chars = env->GetStringUTFChars(iface, nullptr);
+    std::string ifaceName = chars;
+    env->ReleaseStringUTFChars(iface, chars);
+
+    LOGI("pullInterfaceFromMainNs: iface=%s", ifaceName.c_str());
+
+    int mainFd = open("/proc/1/ns/net", O_RDONLY | O_CLOEXEC);
+    if (mainFd < 0) {
+        int err = errno;
+        LOGE("pullInterfaceFromMainNs: open /proc/1/ns/net failed: %s (errno=%d)", std::strerror(err), err);
+        return -err;
+    }
+    int selfFd = open("/proc/self/ns/net", O_RDONLY | O_CLOEXEC);
+    if (selfFd < 0) {
+        int err = errno;
+        LOGE("pullInterfaceFromMainNs: open /proc/self/ns/net failed: %s (errno=%d)", std::strerror(err), err);
+        close(mainFd);
+        return -err;
+    }
+
+    // Temporarily enter the main namespace so if_nametoindex and the netlink
+    // socket can see the interface.
+    if (setns(mainFd, CLONE_NEWNET) != 0) {
+        int err = errno;
+        LOGE("pullInterfaceFromMainNs: setns(main) failed: %s (errno=%d)", std::strerror(err), err);
+        close(mainFd);
+        close(selfFd);
+        return -err;
+    }
+    LOGI("pullInterfaceFromMainNs: temporarily in main ns");
+
+    int rc = 0;
+    unsigned ifindex = if_nametoindex(ifaceName.c_str());
+    if (ifindex == 0) {
+        rc = -errno;
+        LOGE("pullInterfaceFromMainNs: if_nametoindex(%s) failed: %s (errno=%d)",
+             ifaceName.c_str(), std::strerror(errno), errno);
+    } else {
+        struct {
+            nlmsghdr header;
+            ifinfomsg link;
+            char buffer[64];
+        } message{};
+        message.header.nlmsg_len = NLMSG_LENGTH(sizeof(ifinfomsg));
+        message.header.nlmsg_type = RTM_SETLINK;
+        message.header.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+        message.link.ifi_family = AF_UNSPEC;
+        message.link.ifi_index = ifindex;
+        pid_t pid = getpid();
+        appendAttribute(&message.header, sizeof(message), IFLA_NET_NS_PID, &pid, sizeof(pid));
+        rc = netlinkAckErrno(&message.header);
+        if (rc == 0) {
+            LOGI("pullInterfaceFromMainNs: moved %s (ifindex=%u) into ns of pid=%d",
+                 ifaceName.c_str(), ifindex, pid);
+        } else {
+            LOGE("pullInterfaceFromMainNs: netlink move failed: %s (errno=%d)",
+                 std::strerror(rc), rc);
+        }
+    }
+
+    // Return to the caller's (isolated) namespace.
+    if (setns(selfFd, CLONE_NEWNET) != 0) {
+        int err = errno;
+        LOGE("pullInterfaceFromMainNs: setns(self) failed: %s (errno=%d)", std::strerror(err), err);
+        // If we can't get back, the daemon is stuck in the main ns. Treat as
+        // fatal: return the setns error if the move itself succeeded.
+        if (rc == 0) rc = -err;
+    }
+    close(mainFd);
+    close(selfFd);
+    return rc;
 }

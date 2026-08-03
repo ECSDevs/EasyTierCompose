@@ -40,6 +40,7 @@ data class RootTunSpec(
 
 data class RootRuntimeStatus(
     val state: String,
+    val profileId: String?,
     val virtualIpv4: String?,
     val tunDevice: String?,
     val error: String?,
@@ -55,10 +56,12 @@ data class RootRuntimeStatus(
         parcel.readString(),
         parcel.readString(),
         parcel.readString(),
+        parcel.readString(),
     )
 
     override fun writeToParcel(parcel: Parcel, flags: Int) {
         parcel.writeString(state)
+        parcel.writeString(profileId)
         parcel.writeString(virtualIpv4)
         parcel.writeString(tunDevice)
         parcel.writeString(error)

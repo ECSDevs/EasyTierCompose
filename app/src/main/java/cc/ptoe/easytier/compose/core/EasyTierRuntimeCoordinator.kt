@@ -70,6 +70,33 @@ class EasyTierRuntimeCoordinator(private val context: Context, activity: Activit
 
     suspend fun stop(): RuntimeStatus = mutex.withLock { stopLocked() }
 
+    /**
+     * Attempts to reconnect to a root daemon left running by a previous app process
+     * (orphan process). If the daemon reports a running EasyTier instance, matches
+     * its [profileId] against [profileLookup] and, on a match, takes over: sets the
+     * active profile, publishes the daemon's status, and resumes polling. If the
+     * profile no longer exists, stops the orphan so it doesn't linger.
+     *
+     * Safe to call on every app launch: it is a no-op when no daemon is running
+     * (state STOPPED) and when the active transport is VPN_SERVICE.
+     */
+    suspend fun attachOrphanRoot(profileLookup: suspend (String) -> EasyTierProfile?) = mutex.withLock {
+        // Skip if a session is already active in this process.
+        if (activeProfile != null) return@withLock
+        val rootStatus = root.attach() ?: return@withLock
+        val profileId = rootStatus.profileId
+        val profile = if (profileId != null) profileLookup(profileId) else null
+        if (profile == null) {
+            // Profile was deleted while the app was gone — stop the orphan.
+            root.stop()
+            return@withLock
+        }
+        activeProfile = profile
+        val status = root.adopt(rootStatus, profile)
+        mutableStatus.value = status
+        if (status.state == RuntimeState.RUNNING || status.state == RuntimeState.STARTING) pollRoot()
+    }
+
     suspend fun onVpnPermissionResult(granted: Boolean): RuntimeStatus = mutex.withLock {
         val result = vpn.onPermissionResult(granted)
         mutableStatus.value = result

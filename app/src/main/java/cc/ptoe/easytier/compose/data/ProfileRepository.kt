@@ -86,6 +86,7 @@ class GlobalSettingsRepository(private val context: Context) {
     private val noTunKey = booleanPreferencesKey("no_tun")
     private val socks5AllowLanKey = booleanPreferencesKey("socks5_allow_lan")
     private val socks5PortKey = stringPreferencesKey("socks5_port")
+    private val startOnBootKey = booleanPreferencesKey("start_on_boot")
 
     val settings: Flow<GlobalSettings> = context.easyTierGlobalSettingsDataStore.data.map { preferences ->
         GlobalSettings(
@@ -93,6 +94,7 @@ class GlobalSettingsRepository(private val context: Context) {
             noTun = preferences[noTunKey] ?: false,
             socks5AllowLan = preferences[socks5AllowLanKey] ?: false,
             socks5Port = preferences[socks5PortKey]?.toIntOrNull() ?: 1080,
+            startOnBoot = preferences[startOnBootKey] ?: false,
         )
     }
 
@@ -102,6 +104,7 @@ class GlobalSettingsRepository(private val context: Context) {
             preferences[noTunKey] = settings.noTun
             preferences[socks5AllowLanKey] = settings.socks5AllowLan
             preferences[socks5PortKey] = settings.socks5Port.toString()
+            preferences[startOnBootKey] = settings.startOnBoot
         }
     }
 }

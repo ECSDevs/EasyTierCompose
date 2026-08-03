@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.VpnKey
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AlertDialogDefaults
 import androidx.compose.material3.AssistChip
@@ -76,8 +77,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -134,7 +133,6 @@ fun EasyTierApp(
     requestVpnPermission: (android.content.Intent) -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
-    val snackbar = remember { SnackbarHostState() }
     var destination by remember { mutableStateOf(Destination.Dashboard) }
     val wide = LocalConfiguration.current.screenWidthDp >= 840
     val draftRunning = state.draft?.let { draft ->
@@ -146,14 +144,12 @@ fun EasyTierApp(
             if (effect is RuntimeEffect.RequestVpnPermission) requestVpnPermission(effect.intent)
         }
     }
-    LaunchedEffect(state.runtime.error) { state.runtime.error?.let { snackbar.showSnackbar(it) } }
     LaunchedEffect(state.draft) {
         if (state.draft == null && destination == Destination.Editor) destination = Destination.Profiles
     }
 
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
-        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = { Text(destination.label) },
@@ -273,6 +269,16 @@ private fun DashboardScreen(
     }
 
     LazyColumn(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        val error = state.runtime.error
+        if (error != null) {
+            item {
+                ErrorBanner(
+                    message = error,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+
         item {
             StatusCard(
                 runtime = state.runtime,
@@ -290,7 +296,37 @@ private fun DashboardScreen(
                 hostname = state.runtime.hostname,
                 natType = state.runtime.natType,
                 statusState = state.runtime.state,
-                error = state.runtime.error,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ErrorBanner(
+    message: String,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        shape = AlertDialogDefaults.shape,
+        color = MaterialTheme.colorScheme.errorContainer,
+        tonalElevation = AlertDialogDefaults.TonalElevation,
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Default.Warning,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.size(24.dp),
+            )
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer,
             )
         }
     }
@@ -396,10 +432,8 @@ private fun StatusDetailsGroup(
     hostname: String?,
     natType: String?,
     statusState: RuntimeState,
-    error: String?,
 ) {
-    val statusText = statusState.name.lowercase().replaceFirstChar { it.uppercase() } +
-        (error?.let { " — $it" } ?: "")
+    val statusText = statusState.name.lowercase().replaceFirstChar { it.uppercase() }
     SettingsGroup {
         StatusDetailRow(
             icon = Icons.Default.Layers,
@@ -1427,6 +1461,9 @@ private fun SettingsScreen(
                     )
                     SwitchRow("No TUN", settings.noTun) { checked ->
                         onGlobalSettings(settings.copy(noTun = checked))
+                    }
+                    SwitchRow("Start on boot", settings.startOnBoot) { checked ->
+                        onGlobalSettings(settings.copy(startOnBoot = checked))
                     }
                     SwitchRow("SOCKS5 allow LAN", settings.socks5AllowLan) { checked ->
                         onGlobalSettings(settings.copy(socks5AllowLan = checked))

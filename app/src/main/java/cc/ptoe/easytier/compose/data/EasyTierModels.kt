@@ -133,6 +133,7 @@ data class GlobalSettings(
     val noTun: Boolean = false,
     val socks5AllowLan: Boolean = false,
     val socks5Port: Int = 1080,
+    val startOnBoot: Boolean = false,
 )
 
 enum class RuntimeState {
