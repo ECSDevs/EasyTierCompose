@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -97,7 +98,11 @@ class EasyTierRuntimeCoordinator(private val context: Context, activity: Activit
     }
 
     private suspend fun stopLocked(): RuntimeStatus {
-        pollJob?.cancel()
+        // cancelAndJoin (instead of cancel) ensures the poll coroutine has fully
+        // terminated before we call stopService(). Otherwise a late establishWhenResolved()
+        // call could post a startForegroundService intent AFTER stopService(), causing
+        // EasyTierVpnService to be re-activated and leaving the system VPN up.
+        pollJob?.cancelAndJoin()
         pollJob = null
         val profile = activeProfile
         when (profile?.tunMode) {
@@ -168,9 +173,12 @@ fun String.networkInfo(profileId: String): NetworkInfo? = runCatching {
     val natType = myNode?.get("stun_info")?.jsonObject?.get("udp_nat_type")?.let(::natTypeName)
     // Each route entry advertises proxy_cidrs (repeated string of CIDRs like "192.168.0.0/16").
     // Those are the remote networks reachable via peers — the kernel routes we need on the TUN.
+    // Peers may advertise bare IPs (e.g. "192.168.1.100" without a prefix); normalize those to
+    // /32 so VpnService.Builder.addRoute / netlink route addition don't reject them. This
+    // mirrors easytier-gui's getRoutesForVpn behavior.
     val routes = (info["routes"] as? JsonArray)?.flatMap { route ->
         (route.jsonObject["proxy_cidrs"] as? JsonArray)?.mapNotNull { cidr ->
-            cidr.jsonPrimitive.content.takeIf(String::isNotBlank)
+            cidr.jsonPrimitive.content.takeIf(String::isNotBlank)?.let(::normalizeCidr)
         } ?: emptyList()
     }?.distinct()?.sorted() ?: emptyList()
     val peers = info["peer_route_pairs"]?.jsonArray?.mapNotNull { it.peerRoutePair() }.orEmpty()
@@ -242,6 +250,14 @@ fun natTypeName(raw: JsonElement?): String {
 // tunnel_type may be a bare scheme ("tcp") or a full URL ("tcp://1.2.3.4:11010"); keep the scheme.
 fun normalizeTunnelType(raw: String): String =
     raw.substringBefore("://").ifBlank { raw }
+
+/**
+ * Normalizes a CIDR string from peer-advertised proxy_cidrs. Peers may advertise bare IPs
+ * (e.g. "192.168.1.100" without a prefix); append /32 so VpnService.Builder.addRoute and
+ * netlink route addition accept them. Strings already containing "/" are returned unchanged.
+ */
+fun normalizeCidr(cidr: String): String =
+    if (cidr.contains('/')) cidr else "$cidr/32"
 
 /**
  * Returns [EasyTierProfile.hostname] when set, otherwise fills it from the Android device name

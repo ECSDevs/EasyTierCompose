@@ -10,6 +10,7 @@ import android.content.pm.ServiceInfo
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import cc.ptoe.easytier.compose.MainActivity
@@ -22,27 +23,32 @@ class EasyTierVpnService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForegroundCompat()
         val command = intent ?: return stopAndExit(startId)
-        val instanceName = command.getStringExtra(EXTRA_INSTANCE_NAME) ?: return stopAndExit(startId)
-        val ipv4Cidr = command.getStringExtra(EXTRA_IPV4_CIDR) ?: return stopAndExit(startId)
+        val instanceName = command.getStringExtra(EXTRA_INSTANCE_NAME) ?: return stopAndExit(startId, "missing instance name")
+        val ipv4Cidr = command.getStringExtra(EXTRA_IPV4_CIDR) ?: return stopAndExit(startId, "missing ipv4 cidr")
         val routes = command.getStringArrayExtra(EXTRA_ROUTES)?.map { it }.orEmpty().toTypedArray()
         val dns = command.getBooleanExtra(EXTRA_DNS, false)
         val mtu = command.getIntExtra(EXTRA_MTU, 1380)
+        Log.i(TAG, "onStartCommand: instance=$instanceName cidr=$ipv4Cidr routes=${routes.size} dns=$dns mtu=$mtu")
         vpnInterface?.close()
         vpnInterface = try {
             createInterface(ipv4Cidr, routes, dns, mtu)
         } catch (e: Exception) {
-            return stopAndExit(startId)
+            Log.e(TAG, "createInterface failed: ${e.message}", e)
+            return stopAndExit(startId, "createInterface: ${e.message}")
         }
         val result = EasyTierJni.setTunFd(instanceName, requireNotNull(vpnInterface).fd)
         if (result != 0) {
+            Log.e(TAG, "setTunFd failed: result=$result")
             vpnInterface?.close()
             vpnInterface = null
-            return stopAndExit(startId)
+            return stopAndExit(startId, "setTunFd=$result")
         }
+        Log.i(TAG, "onStartCommand: success, fd=${vpnInterface?.fd}")
         return Service.START_NOT_STICKY
     }
 
-    private fun stopAndExit(startId: Int): Int {
+    private fun stopAndExit(startId: Int, reason: String = "unknown"): Int {
+        Log.w(TAG, "stopAndExit: $reason")
         stopSelf(startId)
         return Service.START_NOT_STICKY
     }
@@ -68,21 +74,30 @@ class EasyTierVpnService : VpnService() {
 
     private fun createInterface(ipv4Cidr: String, routes: Array<String>, dns: Boolean, mtu: Int): ParcelFileDescriptor {
         val (address, prefix) = ipv4Cidr.parseCidr()
-        return Builder()
+        val builder = Builder()
             .setSession("EasyTier")
             .setBlocking(false)
             .setMtu(mtu)
             .addAddress(address, prefix)
             .addAddress("fd00::1", 128)
-            .apply {
-                routes.forEach { route ->
-                    val (routeAddress, routePrefix) = route.parseCidr()
-                    addRoute(routeAddress, routePrefix)
-                }
-                if (dns) addDnsServer(MAGIC_DNS)
-                addDisallowedApplication(packageName)
+        // Add routes defensively: a single malformed/unexpected CIDR (e.g. bare IP
+        // that slipped through normalization, or a prefix the device rejects) must
+        // not abort the whole VPN establishment — that would leave the user with a
+        // connected EasyTier but no TUN interface, manifesting as silent timeouts.
+        var added = 0
+        for (route in routes) {
+            try {
+                val (routeAddress, routePrefix) = route.parseCidr()
+                builder.addRoute(routeAddress, routePrefix)
+                added++
+            } catch (e: Exception) {
+                Log.w(TAG, "createInterface: skipping invalid route '$route': ${e.message}")
             }
-            .establish() ?: error("Failed to establish EasyTier VPN")
+        }
+        if (dns) builder.addDnsServer(MAGIC_DNS)
+        builder.addDisallowedApplication(packageName)
+        Log.i(TAG, "createInterface: cidr=$ipv4Cidr mtu=$mtu routes=${routes.size} added=$added dns=$dns")
+        return builder.establish() ?: error("Failed to establish EasyTier VPN")
     }
 
     private fun closeTunnel() {
@@ -121,6 +136,7 @@ class EasyTierVpnService : VpnService() {
     }
 
     companion object {
+        private const val TAG = "EasyTierVpnService"
         const val EXTRA_INSTANCE_NAME = "cc.ptoe.easytier.compose.INSTANCE_NAME"
         const val EXTRA_IPV4_CIDR = "cc.ptoe.easytier.compose.IPV4_CIDR"
         const val EXTRA_ROUTES = "cc.ptoe.easytier.compose.ROUTES"

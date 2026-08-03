@@ -61,7 +61,10 @@ void appendAttribute(nlmsghdr* header, size_t maximum, int type, const void* dat
     header->nlmsg_len = offset + RTA_ALIGN(attributeLength);
 }
 
-void netlinkAck(nlmsghdr* message) {
+// Returns 0 on success, or a positive errno when the kernel acknowledges with
+// an error. Throws std::runtime_error only when the netlink transport itself
+// fails (socket/send/recv), not on kernel-level route errors.
+int netlinkAckErrno(nlmsghdr* message) {
     int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
     if (fd < 0) {
         LOGE("netlink: open socket failed: %s", std::strerror(errno));
@@ -89,10 +92,17 @@ void netlinkAck(nlmsghdr* message) {
     if (header->nlmsg_type == NLMSG_ERROR) {
         auto* error = reinterpret_cast<nlmsgerr*>(NLMSG_DATA(header));
         if (error->error != 0) {
-            LOGE("netlink: ack error: %s (errno=%d)", std::strerror(-error->error), -error->error);
-            throw std::runtime_error(std::string("netlink: ") + std::strerror(-error->error));
+            int err = -error->error;
+            LOGE("netlink: ack error: %s (errno=%d)", std::strerror(err), err);
+            return err;
         }
     }
+    return 0;
+}
+
+void netlinkAck(nlmsghdr* message) {
+    int err = netlinkAckErrno(message);
+    if (err != 0) throw std::runtime_error(std::string("netlink: ") + std::strerror(err));
 }
 
 void configureLink(int ifindex, int mtu) {
@@ -140,7 +150,11 @@ void configureAddress(int ifindex, const std::string& cidr) {
     LOGI("configureAddress: success");
 }
 
-void changeRoute(int ifindex, const std::string& cidr, bool add) {
+// Returns 0 on success, or a positive errno on kernel-level failure. Throws
+// std::runtime_error only for programming errors (invalid CIDR / netlink
+// transport failure). Used by syncRoutes so a single route's kernel error
+// (e.g. EEXIST, ENOENT) does not abort the whole sync.
+int changeRouteErrno(int ifindex, const std::string& cidr, bool add) {
     auto slash = cidr.find('/');
     if (slash == std::string::npos) throw std::runtime_error("invalid route CIDR");
     int prefix = std::stoi(cidr.substr(slash + 1));
@@ -170,8 +184,14 @@ void changeRoute(int ifindex, const std::string& cidr, bool add) {
     message.route.rtm_type = RTN_UNICAST;
     appendAttribute(&message.header, sizeof(message), RTA_DST, &destination, sizeof(destination));
     appendAttribute(&message.header, sizeof(message), RTA_OIF, &ifindex, sizeof(ifindex));
-    netlinkAck(&message.header);
-    LOGI("changeRoute: success");
+    int err = netlinkAckErrno(&message.header);
+    if (err == 0) LOGI("changeRoute: success");
+    return err;
+}
+
+void changeRoute(int ifindex, const std::string& cidr, bool add) {
+    int err = changeRouteErrno(ifindex, cidr, add);
+    if (err != 0) throw std::runtime_error(std::string("netlink: ") + std::strerror(err));
 }
 
 void destroyInterface() {
@@ -275,15 +295,43 @@ Java_cc_ptoe_easytier_compose_transport_root_RootTunNative_syncRoutes(JNIEnv* en
             env->ReleaseStringUTFChars(value, chars);
             env->DeleteLocalRef(value);
         }
-        for (const auto& route : g_routes) if (!wanted.contains(route)) {
+        // Delete stale routes. ENOENT / ESRCH mean the route is already gone from
+        // the kernel — treat as success and drop from local state. Other errors
+        // are logged but the route is kept in g_routes so the next sync retries.
+        std::set<std::string> nextRoutes;
+        for (const auto& route : g_routes) {
+            if (wanted.contains(route)) { nextRoutes.insert(route); continue; }
             LOGI("syncRoutes: removing stale route %s", route.c_str());
-            changeRoute(g_ifindex, route, false);
+            try {
+                int err = changeRouteErrno(g_ifindex, route, false);
+                if (err == 0 || err == ENOENT || err == ESRCH) {
+                    // removed or already absent
+                } else {
+                    LOGE("syncRoutes: delete route %s failed: %s (errno=%d)", route.c_str(), std::strerror(err), err);
+                    nextRoutes.insert(route);
+                }
+            } catch (const std::exception& e) {
+                LOGE("syncRoutes: delete route %s failed: %s", route.c_str(), e.what());
+                nextRoutes.insert(route);
+            }
         }
-        for (const auto& route : wanted) if (!g_routes.contains(route)) {
+        // Add new routes. EEXIST means the route is already in the kernel (e.g.
+        // from a previous run that did not clean up) — treat as success. Other
+        // errors are logged and the route is skipped; the next sync retries.
+        for (const auto& route : wanted) if (!nextRoutes.contains(route)) {
             LOGI("syncRoutes: adding new route %s", route.c_str());
-            changeRoute(g_ifindex, route, true);
+            try {
+                int err = changeRouteErrno(g_ifindex, route, true);
+                if (err == 0 || err == EEXIST) {
+                    nextRoutes.insert(route);
+                } else {
+                    LOGE("syncRoutes: add route %s failed: %s (errno=%d)", route.c_str(), std::strerror(err), err);
+                }
+            } catch (const std::exception& e) {
+                LOGE("syncRoutes: add route %s failed: %s", route.c_str(), e.what());
+            }
         }
-        g_routes = std::move(wanted);
+        g_routes = std::move(nextRoutes);
         LOGI("syncRoutes: done, %zu routes active", g_routes.size());
     } catch (const std::exception& error) {
         LOGE("syncRoutes: failed: %s", error.what());

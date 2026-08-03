@@ -25,7 +25,20 @@ class VpnTunTransport(private val context: Context, private val activity: Activi
     val effects: SharedFlow<RuntimeEffect> = mutableEffects.asSharedFlow()
     private var pending: PendingStart? = null
 
+    // Guards against establishWhenResolved racing with stop(): once running flips to
+    // false, no further startForegroundService intents are posted, so stopService()
+    // cannot be re-activated by a late poll iteration.
+    @Volatile private var running: Boolean = false
+    // Tracks the last established VPN state so we only re-establish when the address
+    // or routes actually change, instead of re-calling startForegroundService every
+    // 2 seconds from the poll loop.
+    private var establishedIpv4Cidr: String? = null
+    private var establishedRoutes: List<String> = emptyList()
+
     override suspend fun start(profile: EasyTierProfile, toml: String, globalSettings: GlobalSettings): RuntimeStatus {
+        running = true
+        establishedIpv4Cidr = null
+        establishedRoutes = emptyList()
         val prepared = VpnService.prepare(context)
         val ipv4Cidr = profile.virtualIpv4?.takeIf { !profile.dhcp }
         if (prepared != null) {
@@ -45,6 +58,14 @@ class VpnTunTransport(private val context: Context, private val activity: Activi
     }
 
     fun establishWhenResolved(profile: EasyTierProfile, ipv4Cidr: String, routes: List<String>): RuntimeStatus {
+        if (!running) return mutableStatus.value
+        // Only re-establish the VPN interface when the address or routes actually change,
+        // avoiding redundant startForegroundService calls that race with stop().
+        if (ipv4Cidr == establishedIpv4Cidr && routes == establishedRoutes) {
+            return mutableStatus.value
+        }
+        establishedIpv4Cidr = ipv4Cidr
+        establishedRoutes = routes
         ContextCompat.startForegroundService(
             context,
             EasyTierVpnService.intent(context, profile.id, ipv4Cidr, routes, profile.enableMagicDns, profile.mtu),
@@ -54,6 +75,9 @@ class VpnTunTransport(private val context: Context, private val activity: Activi
     }
 
     override suspend fun stop() {
+        running = false
+        establishedIpv4Cidr = null
+        establishedRoutes = emptyList()
         pending = null
         context.stopService(Intent(context, EasyTierVpnService::class.java))
         mutableStatus.value = RuntimeStatus.Stopped

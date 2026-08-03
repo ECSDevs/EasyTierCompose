@@ -87,6 +87,16 @@ android {
         }
     }
     buildTypes {
+        debug {
+            // Sign debug builds with the release key when credentials are
+            // available (env vars on CI, or keystore.properties locally) so
+            // debug and release variants share the same signing identity and
+            // can be installed interchangeably. Falls back to AGP's default
+            // debug signing when credentials are absent.
+            if (hasSigningCredentials.get()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
         release {
             // Attach the release signing config when credentials are available;
             // otherwise keep AGP's default (debug) signing so local builds
