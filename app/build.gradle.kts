@@ -1,3 +1,6 @@
+import java.io.StringReader
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -17,6 +20,29 @@ val commitCount: Provider<Int> = providers.exec {
 }.standardOutput.asText.map {
     it.trim().toIntOrNull()?.coerceAtLeast(1) ?: 1
 }
+
+// Signing credentials for the release variant. CI passes env vars
+// (KEYSTORE_PATH / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD) decoded
+// from GitHub secrets; local builds use a sibling keystore.properties file.
+// Configuration-cache compatible: file content is read via providers.fileContents
+// (tracked build input, evaluated lazily), env vars via providers.environmentVariable.
+val keystoreProps: Provider<Properties> = providers.fileContents(
+    rootProject.layout.projectDirectory.file("keystore.properties")
+).asText.map { txt: String ->
+    Properties().apply { load(StringReader(txt)) }
+}.orElse(Properties())
+
+val releaseStoreFile: Provider<String> = providers.environmentVariable("KEYSTORE_PATH")
+    .orElse(keystoreProps.map { props: Properties -> props.getProperty("storeFile") ?: "" })
+val releaseStorePassword: Provider<String> = providers.environmentVariable("KEYSTORE_PASSWORD")
+    .orElse(keystoreProps.map { props: Properties -> props.getProperty("storePassword") ?: "" })
+val releaseKeyAlias: Provider<String> = providers.environmentVariable("KEY_ALIAS")
+    .orElse(keystoreProps.map { props: Properties -> props.getProperty("keyAlias") ?: "" })
+val releaseKeyPassword: Provider<String> = providers.environmentVariable("KEY_PASSWORD")
+    .orElse(keystoreProps.map { props: Properties -> props.getProperty("keyPassword") ?: "" })
+val hasSigningCredentials: Provider<Boolean> = releaseStoreFile
+    .map { path: String -> path.isNotBlank() }
+    .orElse(false)
 
 android {
     namespace = "cc.ptoe.easytier.compose"
@@ -47,8 +73,27 @@ android {
             version = "3.22.1"
         }
     }
+    signingConfigs {
+        create("release") {
+            // Only populate when credentials resolve (env vars on CI, or
+            // keystore.properties locally). When absent, the release variant
+            // falls back to the debug signing config so builds still succeed.
+            if (hasSigningCredentials.get()) {
+                storeFile = rootProject.file(releaseStoreFile.get())
+                storePassword = releaseStorePassword.get()
+                keyAlias = releaseKeyAlias.get()
+                keyPassword = releaseKeyPassword.get()
+            }
+        }
+    }
     buildTypes {
         release {
+            // Attach the release signing config when credentials are available;
+            // otherwise keep AGP's default (debug) signing so local builds
+            // without the keystore still produce an installable APK.
+            if (hasSigningCredentials.get()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             optimization {
                 enable = false
             }

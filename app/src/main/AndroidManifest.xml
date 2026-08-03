@@ -42,7 +42,8 @@
         </service>
         <service
             android:name=".transport.root.EasyTierRootService"
-            android:exported="false" />
+            android:exported="false"
+            tools:ignore="Instantiatable" />
     </application>
 
 </manifest>
