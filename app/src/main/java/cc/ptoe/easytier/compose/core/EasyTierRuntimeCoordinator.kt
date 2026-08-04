@@ -164,7 +164,9 @@ class EasyTierRuntimeCoordinator(private val context: Context, activity: Activit
                         mutableStatus.value = mutableStatus.value.copy(hostname = info.hostname, natType = info.natType)
                     }
                 }
-                delay(2_000)
+                // STARTING polls faster to resolve the virtual IPv4 quickly; steady-state
+                // peers/latency change slowly, so 5s is enough and cuts JNI + JSON overhead.
+                delay(if (mutableStatus.value.state == RuntimeState.RUNNING) 5_000 else 2_000)
             }
         }
     }

@@ -13,15 +13,11 @@ import cc.ptoe.easytier.compose.data.RuntimeState
 import cc.ptoe.easytier.compose.data.RuntimeStatus
 import cc.ptoe.easytier.compose.transport.RuntimeTransport
 import com.topjohnwu.superuser.ipc.RootService
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.builtins.ListSerializer
@@ -29,17 +25,19 @@ import kotlinx.serialization.json.Json
 import kotlin.coroutines.resume
 
 class RootTunTransport(private val context: Context) : RuntimeTransport {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutableStatus = MutableStateFlow(RuntimeStatus.Stopped)
     override val status: StateFlow<RuntimeStatus> = mutableStatus.asStateFlow()
     private var service: IEasyTierRootService? = null
     private var bound = false
-    private var activeProfile: EasyTierProfile? = null
-    private var pollJob: Job? = null
+    // @Volatile: the status callback fires on a Binder thread, while start/adopt/stop
+    // mutate this on the caller's thread. Volatile gives the callback a consistent view.
+    @Volatile private var activeProfile: EasyTierProfile? = null
+    private var callback: IRootStatusCallback? = null
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) { service = IEasyTierRootService.Stub.asInterface(binder) }
         override fun onServiceDisconnected(name: ComponentName) {
             service = null
+            callback = null
             if (bound) mutableStatus.value = RuntimeStatus(RuntimeState.ERROR, activeProfile?.id, activeProfile?.tunMode, null, null, "Root helper disconnected")
         }
     }
@@ -49,22 +47,21 @@ class RootTunTransport(private val context: Context) : RuntimeTransport {
         mutableStatus.value = RuntimeStatus(RuntimeState.STARTING, profile.id, profile.tunMode, null, null, null)
         val remote = bind() ?: return error(profile, "Root helper disconnected")
         return runCatching {
+            registerCallback(remote)
             remote.start(profile.id, toml, TomlConfigBuilder.rootTunSpec(profile, globalSettings))
-            repeat(30) {
-                delay(500)
-                val root = remote.status
-                val status = root.toRuntimeStatus(profile)
-                mutableStatus.value = status
-                if (status.state != RuntimeState.STARTING) {
-                    if (status.state == RuntimeState.RUNNING) pollRoot(profile)
-                    return status
-                }
+            // Wait for the daemon to reach RUNNING or ERROR. registerStatusCallback
+            // immediately pushes the daemon's *current* state, which is STOPPED before
+            // `remote.start(...)` takes effect — filtering for RUNNING/ERROR skips that
+            // initial STOPPED (and the subsequent STARTING) so we don't bail out early
+            // while the daemon is still doing DHCP to resolve the virtual IPv4.
+            withTimeoutOrNull(15_000) {
+                mutableStatus.first { it.state == RuntimeState.RUNNING || it.state == RuntimeState.ERROR }
+            } ?: run {
+                // Timed out — stop the daemon so the root process doesn't linger in
+                // STARTING, leaving no way for the user to disconnect from ERROR.
+                stop()
+                error(profile, "Root helper start timed out")
             }
-            // Timed out — stop the daemon so the root process doesn't linger in the
-            // background. Without this the daemon stays bound and running (still in
-            // STARTING), leaving no way for the user to disconnect from the ERROR state.
-            stop()
-            error(profile, "Root helper start timed out")
         }.getOrElse {
             stop()
             error(profile, it.message ?: "Root helper disconnected")
@@ -79,7 +76,7 @@ class RootTunTransport(private val context: Context) : RuntimeTransport {
      *  starting; `null` if the daemon is fresh/stopped (no orphan to adopt). When
      *  `null` is returned the transport unbinds so the daemon can exit on its own.
      *  On a non-null return the transport stays bound and the caller should invoke
-     *  [adopt] with the matched profile to begin polling.
+     *  [adopt] with the matched profile to receive pushed status updates.
      */
     suspend fun attach(): RootRuntimeStatus? {
         val remote = bind() ?: return null
@@ -95,22 +92,19 @@ class RootTunTransport(private val context: Context) : RuntimeTransport {
 
     /**
      * Adopts an orphaned daemon root service with the matched profile. Sets the
-     * active profile, publishes the current status, and begins polling for
-     * status updates. The transport must already be bound (via [attach]).
+     * active profile, publishes the current status, and registers a callback so
+     * all subsequent daemon status changes are pushed to [mutableStatus] without
+     * polling. The transport must already be bound (via [attach]).
      */
     fun adopt(root: RootRuntimeStatus, profile: EasyTierProfile): RuntimeStatus {
         activeProfile = profile
         val status = root.toRuntimeStatus(profile)
         mutableStatus.value = status
-        if (status.state == RuntimeState.RUNNING || status.state == RuntimeState.STARTING) {
-            pollRoot(profile)
-        }
+        service?.let { registerCallback(it) }
         return status
     }
 
     override suspend fun stop() {
-        pollJob?.cancel()
-        pollJob = null
         // Ask the daemon to stop EasyTier + clean up + stopSelf (exits the daemon process).
         runCatching { service?.stop() }
         // Give the root process a brief moment to run stopRoot() before unbinding,
@@ -122,23 +116,35 @@ class RootTunTransport(private val context: Context) : RuntimeTransport {
     }
 
     private fun unbindInternal() {
+        unregisterCallback()
         if (bound) RootService.unbind(connection)
         bound = false
         service = null
     }
 
-    private fun pollRoot(profile: EasyTierProfile) {
-        pollJob?.cancel()
-        val remote = service ?: return
-        pollJob = scope.launch {
-            while (mutableStatus.value.state in setOf(RuntimeState.STARTING, RuntimeState.RUNNING)) {
-                runCatching {
-                    val root = remote.status
-                    mutableStatus.value = root.toRuntimeStatus(profile)
-                }
-                delay(2_000)
+    /**
+     * Registers a push-based status callback with the daemon. Every status change
+     * (STARTING -> RUNNING, peer list refresh, ERROR, STOPPED) is delivered via
+     * [IRootStatusCallback.onStatusUpdated] instead of the app polling getStatus().
+     * The daemon also immediately pushes the current status on registration.
+     */
+    private fun registerCallback(remote: IEasyTierRootService) {
+        if (callback != null) return
+        callback = object : IRootStatusCallback.Stub() {
+            override fun onStatusUpdated(root: RootRuntimeStatus) {
+                // Fires on a Binder thread. MutableStateFlow is thread-safe, and
+                // activeProfile is @Volatile, so this needs no extra synchronization.
+                val profile = activeProfile ?: return
+                mutableStatus.value = root.toRuntimeStatus(profile)
             }
         }
+        runCatching { remote.registerStatusCallback(callback!!) }
+    }
+
+    private fun unregisterCallback() {
+        val cb = callback ?: return
+        callback = null
+        runCatching { service?.unregisterStatusCallback(cb) }
     }
 
     /**

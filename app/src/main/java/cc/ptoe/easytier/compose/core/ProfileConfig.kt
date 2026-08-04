@@ -123,6 +123,18 @@ class ProfileValidator(private val nativeParser: NativeConfigParser = EasyTierNa
 }
 
 object TomlConfigBuilder {
+    /**
+     * fwmark applied to every EasyTier socket in Root TUN mode (0x20000).
+     *
+     * Android's VpnService installs ip rule:
+     *   13000: from all fwmark 0x0/0x20000 uidrange 0-99999 lookup tun0
+     * matching any socket whose fwmark bit 17 is 0. Setting bit 17 = 1
+     * bypasses this rule, and the system's own rule:
+     *   31000: from all fwmark 0x0/0xffff lookup wlan0
+     * routes the traffic through the physical interface (wlan0/eth0).
+     */
+    const val ROOT_TUN_SOCKET_MARK = 131072 // 0x20000
+
     fun build(
         profile: EasyTierProfile,
         globalSettings: GlobalSettings = GlobalSettings(),
@@ -208,7 +220,26 @@ object TomlConfigBuilder {
         append("multi_thread = ${profile.multiThread}\n")
         append("multi_thread_count = ${profile.multiThreadCount}\n")
         append("data_compress_algo = \"${profile.dataCompressAlgo.name}\"\n")
-        append("bind_device = ${profile.bindDevice}\n")
+        // Root TUN mode: disable bind_device (SO_BINDTODEVICE) and set a fwmark
+        // so Android's policy routing routes traffic through the physical
+        // interface, bypassing VpnService/mihomo TUNs.
+        //
+        // Android's VpnService installs ip rule:
+        //   13000: from all fwmark 0x0/0x20000 uidrange 0-99999 lookup tun0
+        // This matches any socket whose fwmark bit 17 is 0, forcing traffic
+        // through tun0. By setting socket_mark = 0x20000 (bit 17 = 1), we
+        // bypass this rule and fall through to:
+        //   31000: from all fwmark 0x0/0xffff lookup wlan0
+        // (0x20000 & 0xffff == 0), which routes through the physical interface.
+        //
+        // bind_device=false avoids SO_BINDTODEVICE to tun0 and lets the fwmark
+        // handle routing entirely. No Rust core changes or .so rebuild needed.
+        if (profile.tunMode == TunMode.ROOT_TUN) {
+            append("bind_device = false\n")
+            append("socket_mark = ${ROOT_TUN_SOCKET_MARK}\n")
+        } else {
+            append("bind_device = ${profile.bindDevice}\n")
+        }
         append("enable_kcp_proxy = ${profile.enableKcpProxy}\n")
         append("disable_kcp_input = ${profile.disableKcpInput}\n")
         append("disable_relay_kcp = ${profile.disableRelayKcp}\n")
