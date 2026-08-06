@@ -98,7 +98,7 @@ fun EasyTierApp(
     val backProgress = remember { Animatable(0f) }
     val editorAnim = remember { Animatable(0f) }
     var editorShown by remember { mutableStateOf(false) }
-    var skipExitAnimation by remember { mutableStateOf(false) }
+    var gestureCommitted by remember { mutableStateOf(false) }
     var lastDraft by remember { mutableStateOf(state.draft) }
     val currentDraft = state.draft
     if (currentDraft != null) lastDraft = currentDraft
@@ -107,19 +107,26 @@ fun EasyTierApp(
     LaunchedEffect(destination) {
         if (destination == Destination.Editor) {
             backProgress.snapTo(0f)
-            skipExitAnimation = false
+            gestureCommitted = false
             editorShown = true
             editorAnim.animateTo(1f, tween(durationMillis = 300))
         } else {
-            backProgress.snapTo(0f)
             if (editorShown) {
-                if (skipExitAnimation) {
-                    editorAnim.snapTo(0f)
+                if (gestureCommitted) {
+                    // Predictive back committed: keep backProgress at the gesture
+                    // position so the editor continues sliding out from where the
+                    // gesture left it, then reset after the animation completes.
+                    editorAnim.animateTo(0f, tween(durationMillis = 250))
+                    backProgress.snapTo(0f)
                 } else {
+                    // Normal exit (back button / save): slide out from rest.
+                    backProgress.snapTo(0f)
                     editorAnim.animateTo(0f, tween(durationMillis = 300))
                 }
                 editorShown = false
-                skipExitAnimation = false
+                gestureCommitted = false
+            } else {
+                backProgress.snapTo(0f)
             }
         }
     }
@@ -128,7 +135,7 @@ fun EasyTierApp(
         try {
             progress.collect { event -> backProgress.snapTo(event.progress) }
             // Gesture committed: discard draft and leave editor.
-            skipExitAnimation = true
+            gestureCommitted = true
             viewModel.discardDraft()
             destination = Destination.Profiles
         } catch (e: CancellationException) {
@@ -151,7 +158,7 @@ fun EasyTierApp(
                             val scale = 1f - bp * 0.1f
                             scaleX = scale
                             scaleY = scale
-                            alpha = 1f - bp * 0.3f
+                            alpha = p * (1f - bp * 0.3f)
                             if (wide) {
                                 translationY = (1f - p) * -size.height
                                 translationX = bp * size.width * 0.35f
@@ -255,7 +262,7 @@ fun EasyTierApp(
                                     alpha = p * (1f - bp * 0.3f)
                                     if (wide) {
                                         // Large screen: enter from top, predictive back slides horizontally.
-                                        translationY = (1f - p) * size.height
+                                        translationY = (1f - p) * -size.height
                                         translationX = bp * size.width * 0.35f
                                     } else {
                                         // Small screen: enter from right, predictive back slides horizontally.
