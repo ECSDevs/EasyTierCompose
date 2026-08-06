@@ -46,7 +46,20 @@ data class PortForward(
 data class VpnPortal(
     val clientCidr: String,
     val wireguardListen: String,
-)
+) {
+    companion object {
+        /**
+         * Generates a portal with safe defaults: a random /24 inside the
+         * CGNAT range 100.64.0.0/10 as the client CIDR (routable inside the
+         * mesh, avoids loopback/link-local and common LAN collisions) and
+         * the standard EasyTier WireGuard portal listen address.
+         */
+        fun generateDefault(random: kotlin.random.Random = kotlin.random.Random.Default): VpnPortal = VpnPortal(
+            clientCidr = "100.${random.nextInt(64, 128)}.${random.nextInt(0, 256)}.0/24",
+            wireguardListen = "0.0.0.0:11011",
+        )
+    }
+}
 
 @Serializable
 data class SecureMode(
@@ -72,7 +85,6 @@ data class EasyTierProfile(
     val manualRoutes: List<String> = emptyList(),
     val exitNodes: List<String> = emptyList(),
     val enableMagicDns: Boolean,
-    val mtu: Int,
     val tunMode: TunMode,
     // IPv6 public address provider
     val ipv6PublicAddrProvider: Boolean = false,
@@ -105,8 +117,6 @@ data class EasyTierProfile(
     val disableUdpHolePunching: Boolean = false,
     val disableSymHolePunching: Boolean = false,
     val disableUpnp: Boolean = false,
-    val multiThread: Boolean = true,
-    val multiThreadCount: Int = 2,
     val dataCompressAlgo: CompressionAlgo = CompressionAlgo.None,
     val bindDevice: Boolean = true,
     val enableKcpProxy: Boolean = false,
@@ -119,8 +129,6 @@ data class EasyTierProfile(
     val disableQuicInput: Boolean = false,
     val disableRelayQuic: Boolean = false,
     val enableRelayForeignNetworkQuic: Boolean = false,
-    val foreignRelayBpsLimit: Long = Long.MAX_VALUE,
-    val instanceRecvBpsLimit: Long = Long.MAX_VALUE,
     val encryptionAlgorithm: EncryptionAlgorithm = EncryptionAlgorithm.AesGcm,
     val tldDnsZone: String = "et.net.",
     val disableRelayData: Boolean = false,
@@ -131,9 +139,14 @@ data class EasyTierProfile(
 data class GlobalSettings(
     val tunDeviceName: String = "easytier0",
     val noTun: Boolean = false,
-    val socks5AllowLan: Boolean = false,
-    val socks5Port: Int = 1080,
     val startOnBoot: Boolean = false,
+    // Engine settings: device-local options that are not specific to any
+    // EasyTier network and do not affect other devices in the network.
+    val mtu: Int = 1380,
+    val multiThread: Boolean = true,
+    val multiThreadCount: Int = 2,
+    val foreignRelayBpsLimit: Long = Long.MAX_VALUE,
+    val instanceRecvBpsLimit: Long = Long.MAX_VALUE,
 )
 
 enum class RuntimeState {
@@ -162,6 +175,19 @@ data class RuntimePeer(
     val cost: Int,
 )
 
+/**
+ * Snapshot of the WireGuard VPN portal exposed by a running EasyTier instance
+ * (VpnPortalRpc.GetVpnPortalInfo). [clientConfig] is the WireGuard client
+ * config rendered by EasyTier Core; [connectedClients] lists portal client
+ * endpoints currently registered.
+ */
+@Serializable
+data class WireGuardPortalInfo(
+    val vpnType: String,
+    val clientConfig: String,
+    val connectedClients: List<String> = emptyList(),
+)
+
 data class RuntimeStatus(
     val state: RuntimeState,
     val profileId: String?,
@@ -172,6 +198,7 @@ data class RuntimeStatus(
     val peers: List<RuntimePeer> = emptyList(),
     val hostname: String? = null,
     val natType: String? = null,
+    val wireguardPortal: WireGuardPortalInfo? = null,
 ) {
     companion object {
         val Stopped = RuntimeStatus(RuntimeState.STOPPED, null, null, null, null, null)

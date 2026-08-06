@@ -9,5 +9,18 @@ object EasyTierJni {
     fun runNetworkInstance(config: String): Int = EasyTierJNI.runNetworkInstance(config)
     fun retainNetworkInstance(instanceNames: Array<String>?): Int = EasyTierJNI.retainNetworkInstance(instanceNames)
     fun collectNetworkInfos(maxLength: Int): String? = EasyTierJNI.collectNetworkInfos(maxLength)
+
+    /**
+     * Calls an exposed EasyTier RPC method with protobuf JSON payloads. Used to
+     * query instance-targeted read-only RPCs (e.g. VpnPortalRpc.GetVpnPortalInfo)
+     * that collectNetworkInfos does not surface.
+     */
+    fun callJsonRpc(
+        serviceName: String,
+        methodName: String,
+        domainName: String?,
+        payloadJson: String,
+    ): String? = EasyTierJNI.callJsonRpc(serviceName, methodName, domainName, payloadJson)
+
     fun getLastError(): String? = EasyTierJNI.getLastError()
 }

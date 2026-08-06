@@ -42,7 +42,6 @@ class ProfileRepository(private val context: Context) {
         virtualIpv4 = null,
         dhcp = false,
         enableMagicDns = false,
-        mtu = 1380,
         tunMode = TunMode.VPN_SERVICE,
     )
 
@@ -82,29 +81,28 @@ class ProfileRepository(private val context: Context) {
 }
 
 class GlobalSettingsRepository(private val context: Context) {
-    private val tunDeviceNameKey = stringPreferencesKey("tun_device_name")
-    private val noTunKey = booleanPreferencesKey("no_tun")
-    private val socks5AllowLanKey = booleanPreferencesKey("socks5_allow_lan")
-    private val socks5PortKey = stringPreferencesKey("socks5_port")
-    private val startOnBootKey = booleanPreferencesKey("start_on_boot")
+    private val settingsKey = stringPreferencesKey("settings_v1")
+    private val json = Json { ignoreUnknownKeys = true }
+
+    // Legacy per-field keys, kept read-only to migrate settings written by
+    // older app versions. Once `settings_v1` exists they are ignored.
+    private val legacyTunDeviceNameKey = stringPreferencesKey("tun_device_name")
+    private val legacyNoTunKey = booleanPreferencesKey("no_tun")
+    private val legacyStartOnBootKey = booleanPreferencesKey("start_on_boot")
 
     val settings: Flow<GlobalSettings> = context.easyTierGlobalSettingsDataStore.data.map { preferences ->
-        GlobalSettings(
-            tunDeviceName = preferences[tunDeviceNameKey] ?: "easytier0",
-            noTun = preferences[noTunKey] ?: false,
-            socks5AllowLan = preferences[socks5AllowLanKey] ?: false,
-            socks5Port = preferences[socks5PortKey]?.toIntOrNull() ?: 1080,
-            startOnBoot = preferences[startOnBootKey] ?: false,
+        preferences[settingsKey]?.let { raw ->
+            runCatching { json.decodeFromString(GlobalSettings.serializer(), raw) }.getOrNull()
+        } ?: GlobalSettings(
+            tunDeviceName = preferences[legacyTunDeviceNameKey] ?: "easytier0",
+            noTun = preferences[legacyNoTunKey] ?: false,
+            startOnBoot = preferences[legacyStartOnBootKey] ?: false,
         )
     }
 
     suspend fun update(settings: GlobalSettings) {
         context.easyTierGlobalSettingsDataStore.edit { preferences ->
-            preferences[tunDeviceNameKey] = settings.tunDeviceName
-            preferences[noTunKey] = settings.noTun
-            preferences[socks5AllowLanKey] = settings.socks5AllowLan
-            preferences[socks5PortKey] = settings.socks5Port.toString()
-            preferences[startOnBootKey] = settings.startOnBoot
+            preferences[settingsKey] = json.encodeToString(GlobalSettings.serializer(), settings)
         }
     }
 }

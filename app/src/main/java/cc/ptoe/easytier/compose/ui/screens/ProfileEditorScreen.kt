@@ -103,7 +103,6 @@ internal fun ProfileEditorScreen(
         item {
             SectionCard(title = "Routing", icon = Icons.Default.Tune) {
                 SwitchRow("Magic DNS", profile.enableMagicDns) { checked -> update { it.copy(enableMagicDns = checked) } }
-                FormField("MTU", profile.mtu.toString(), errors["mtu"]) { v -> update { it.copy(mtu = v.toIntOrNull() ?: it.mtu) } }
                 FormField("TLD DNS zone", profile.tldDnsZone, errors["tldDnsZone"]) { v -> update { it.copy(tldDnsZone = v) } }
                 ProxyNetworkListField(profile.proxyNetworks, errors["proxyNetworks"]) { v -> update { it.copy(proxyNetworks = v) } }
                 ListField("Manual routes", profile.manualRoutes, errors["manualRoutes"]) { v -> update { it.copy(manualRoutes = v) } }
@@ -130,7 +129,10 @@ internal fun ProfileEditorScreen(
             SectionCard(title = "VPN Portal (WireGuard)", icon = Icons.Default.VpnKey) {
                 val portal = profile.vpnPortal
                 SwitchRow("Enable WireGuard portal", portal != null) { checked ->
-                    update { it.copy(vpnPortal = if (checked) VpnPortal("", "") else null) }
+                    // Auto-fill safe defaults (random CGNAT /24 + standard WG
+                    // listen port) so users never end up with unusable values
+                    // like a loopback client CIDR.
+                    update { it.copy(vpnPortal = if (checked) VpnPortal.generateDefault() else null) }
                 }
                 if (portal != null) {
                     FormField("Client CIDR", portal.clientCidr, errors["vpnPortal"]) { v -> update { it.copy(vpnPortal = portal.copy(clientCidr = v)) } }
@@ -171,15 +173,12 @@ internal fun ProfileEditorScreen(
                 }
                 SwitchRow("Enable IPv6", profile.enableIpv6) { c -> update { it.copy(enableIpv6 = c) } }
                 SwitchRow("Latency first", profile.latencyFirst) { c -> update { it.copy(latencyFirst = c) } }
-                SwitchRow("Multi-thread", profile.multiThread) { c -> update { it.copy(multiThread = c) } }
-                FormField("Multi-thread count", profile.multiThreadCount.toString(), errors["multiThreadCount"]) { v -> update { it.copy(multiThreadCount = v.toIntOrNull() ?: it.multiThreadCount) } }
                 SwitchRow("Bind device", profile.bindDevice) { c -> update { it.copy(bindDevice = c) } }
                 SwitchRow("Private mode", profile.privateMode) { c -> update { it.copy(privateMode = c) } }
+                SwitchRow("Relay all peer RPC", profile.relayAllPeerRpc) { c -> update { it.copy(relayAllPeerRpc = c) } }
                 SwitchRow("Proxy forward by system", profile.proxyForwardBySystem) { c -> update { it.copy(proxyForwardBySystem = c) } }
                 SwitchRow("Disable relay data", profile.disableRelayData) { c -> update { it.copy(disableRelayData = c) } }
                 SwitchRow("Enable UDP broadcast relay", profile.enableUdpBroadcastRelay) { c -> update { it.copy(enableUdpBroadcastRelay = c) } }
-                FormField("Foreign relay bps limit", profile.foreignRelayBpsLimit.toString(), errors["foreignRelayBpsLimit"]) { v -> update { it.copy(foreignRelayBpsLimit = v.toLongOrNull() ?: it.foreignRelayBpsLimit) } }
-                FormField("Instance recv bps limit", profile.instanceRecvBpsLimit.toString(), errors["instanceRecvBpsLimit"]) { v -> update { it.copy(instanceRecvBpsLimit = v.toLongOrNull() ?: it.instanceRecvBpsLimit) } }
             }
         }
 
@@ -188,7 +187,6 @@ internal fun ProfileEditorScreen(
                 SwitchRow("Disable P2P", profile.disableP2p) { c -> update { it.copy(disableP2p = c) } }
                 SwitchRow("P2P only", profile.p2pOnly) { c -> update { it.copy(p2pOnly = c) } }
                 SwitchRow("Lazy P2P", profile.lazyP2p) { c -> update { it.copy(lazyP2p = c) } }
-                SwitchRow("Relay all peer RPC", profile.relayAllPeerRpc) { c -> update { it.copy(relayAllPeerRpc = c) } }
                 SwitchRow("Disable TCP hole punching", profile.disableTcpHolePunching) { c -> update { it.copy(disableTcpHolePunching = c) } }
                 SwitchRow("Disable UDP hole punching", profile.disableUdpHolePunching) { c -> update { it.copy(disableUdpHolePunching = c) } }
                 SwitchRow("Disable symmetric hole punching", profile.disableSymHolePunching) { c -> update { it.copy(disableSymHolePunching = c) } }

@@ -34,7 +34,6 @@ class ProfileConfigTest {
         proxyNetworks = listOf(ProxyNetwork(cidr = "192.168.0.0/16")),
         manualRoutes = listOf("10.20.0.0/16"),
         enableMagicDns = true,
-        mtu = 1380,
         tunMode = mode,
     )
 
@@ -83,25 +82,56 @@ class ProfileConfigTest {
 
     @Test
     fun `global settings override tun device name and no tun`() {
-        val settings = GlobalSettings(tunDeviceName = "mytun", noTun = true, socks5AllowLan = false, socks5Port = 1080)
+        val settings = GlobalSettings(tunDeviceName = "mytun", noTun = true)
         val toml = TomlConfigBuilder.build(profile(), settings)
         assertTrue(toml.contains("dev_name = \"mytun\""))
         assertTrue(toml.contains("no_tun = true"))
-        assertTrue(toml.contains("socks5_proxy = \"socks5://127.0.0.1:1080\""))
     }
 
     @Test
-    fun `socks5 allow lan binds to wildcard`() {
-        val settings = GlobalSettings(socks5AllowLan = true, socks5Port = 1080)
-        val toml = TomlConfigBuilder.build(profile(), settings)
-        assertTrue(toml.contains("socks5_proxy = \"socks5://0.0.0.0:1080\""))
+    fun `no tun mode forces bind_device false for vpn service`() {
+        val settings = GlobalSettings(noTun = true)
+        val toml = TomlConfigBuilder.build(profile(mode = TunMode.VPN_SERVICE), settings)
+        assertTrue(toml.contains("bind_device = false"))
+        assertFalse(toml.contains("bind_device = true"))
     }
 
     @Test
-    fun `socks5 port is reflected in toml`() {
-        val settings = GlobalSettings(socks5AllowLan = false, socks5Port = 9999)
-        val toml = TomlConfigBuilder.build(profile(), settings)
-        assertTrue(toml.contains("socks5_proxy = \"socks5://127.0.0.1:9999\""))
+    fun `no tun mode forces bind_device false for root tun`() {
+        val settings = GlobalSettings(noTun = true)
+        val toml = TomlConfigBuilder.build(profile(mode = TunMode.ROOT_TUN), settings)
+        assertTrue(toml.contains("bind_device = false"))
+        // Root mode always applies the fwmark (the core runs in the root daemon),
+        // so under no_tun its traffic still uses the physical NIC.
+        assertTrue(toml.contains("socket_mark ="))
+    }
+
+    @Test
+    fun `no tun root tun spec disables magic dns and flags no tun`() {
+        val settings = GlobalSettings(noTun = true)
+        val spec = TomlConfigBuilder.rootTunSpec(profile(mode = TunMode.ROOT_TUN), settings)
+        assertTrue(spec.noTun)
+        assertFalse(spec.magicDns)
+    }
+
+    @Test
+    fun `vpn service with tun enabled preserves bind_device true`() {
+        val toml = TomlConfigBuilder.build(profile(mode = TunMode.VPN_SERVICE).copy(bindDevice = true))
+        assertTrue(toml.contains("bind_device = true"))
+    }
+
+    @Test
+    fun `no tun mode forces accept_dns false even when magic dns enabled`() {
+        val settings = GlobalSettings(noTun = true)
+        val toml = TomlConfigBuilder.build(profile().copy(enableMagicDns = true), settings)
+        assertTrue(toml.contains("accept_dns = false"))
+    }
+
+    @Test
+    fun `no tun mode preserves accept_dns false when magic dns disabled`() {
+        val settings = GlobalSettings(noTun = true)
+        val toml = TomlConfigBuilder.build(profile().copy(enableMagicDns = false), settings)
+        assertTrue(toml.contains("accept_dns = false"))
     }
 
     @Test
@@ -122,21 +152,14 @@ class ProfileConfigTest {
     fun `validator blocks invalid structured and native fields`() {
         val invalid = profile().copy(
             virtualIpv4 = "10.10.0.2/99",
-            mtu = 400,
             peers = listOf(Peer(uri = "")),
         )
-        val errors = ProfileValidator(NativeConfigParser { "native parse failed" }).validate(invalid)
+        val errors = ProfileValidator(NativeConfigParser { "native parse failed" })
+            .validate(invalid, GlobalSettings(mtu = 400))
         assertTrue(errors.containsKey("virtualIpv4"))
-        assertTrue(errors.containsKey("mtu"))
+        assertTrue(errors.containsKey("globalMtu"))
         assertTrue(errors.containsKey("peers"))
         assertEquals("native parse failed", errors["form"])
-    }
-
-    @Test
-    fun `validator rejects invalid socks5 port`() {
-        val settings = GlobalSettings(socks5Port = 0)
-        val errors = ProfileValidator(NativeConfigParser { null }).validate(profile(), settings)
-        assertTrue(errors.containsKey("globalSettings"))
     }
 
     @Test
@@ -149,13 +172,13 @@ class ProfileConfigTest {
             stunServers = listOf("stun://stun.l.google.com:19302"),
             dataCompressAlgo = CompressionAlgo.Zstd,
             encryptionAlgorithm = EncryptionAlgorithm.ChaCha20,
-            multiThreadCount = 4,
             enableKcpProxy = true,
             enableExitNode = true,
             exitNodes = listOf("10.20.0.1"),
             secureMode = SecureMode(enabled = true, localPrivateKey = "priv", localPublicKey = "pub"),
         )
-        val errors = ProfileValidator(NativeConfigParser { null }).validate(full)
+        val settings = GlobalSettings(multiThreadCount = 4)
+        val errors = ProfileValidator(NativeConfigParser { null }).validate(full, settings)
         assertTrue(errors.toString(), errors.isEmpty())
     }
 
@@ -171,6 +194,33 @@ class ProfileConfigTest {
     }
 
     @Test
+    fun `validator blocks non-routable vpn portal client cidr`() {
+        listOf(
+            "127.0.0.1/32",   // loopback: reply packets die on peers' lo
+            "169.254.10.0/24", // link-local
+            "224.0.0.0/24",   // multicast
+            "0.0.0.0/0",      // unspecified
+            "10.99.0.0/30",   // prefix too small for client addresses
+        ).forEach { cidr ->
+            val invalid = profile().copy(
+                vpnPortal = VpnPortal(clientCidr = cidr, wireguardListen = "0.0.0.0:51820"),
+            )
+            val errors = ProfileValidator(NativeConfigParser { null }).validate(invalid)
+            assertTrue("expected $cidr to be rejected, errors: $errors", errors.containsKey("vpnPortal"))
+        }
+    }
+
+    @Test
+    fun `validator accepts generated vpn portal defaults`() {
+        repeat(32) {
+            val portal = VpnPortal.generateDefault()
+            val errors = ProfileValidator(NativeConfigParser { null })
+                .validate(profile().copy(vpnPortal = portal))
+            assertTrue("generated portal invalid: $portal -> $errors", !errors.containsKey("vpnPortal"))
+        }
+    }
+
+    @Test
     fun `validator blocks invalid proxy networks`() {
         val invalid = profile().copy(
             proxyNetworks = listOf(ProxyNetwork(cidr = "not-a-cidr")),
@@ -181,15 +231,15 @@ class ProfileConfigTest {
 
     @Test
     fun `validator rejects negative bps limits and zero thread count`() {
-        val invalid = profile().copy(
+        val invalidSettings = GlobalSettings(
             multiThreadCount = 0,
             foreignRelayBpsLimit = -1,
             instanceRecvBpsLimit = -5,
         )
-        val errors = ProfileValidator(NativeConfigParser { null }).validate(invalid)
-        assertTrue(errors.containsKey("multiThreadCount"))
-        assertTrue(errors.containsKey("foreignRelayBpsLimit"))
-        assertTrue(errors.containsKey("instanceRecvBpsLimit"))
+        val errors = ProfileValidator(NativeConfigParser { null }).validate(profile(), invalidSettings)
+        assertTrue(errors.containsKey("globalMultiThreadCount"))
+        assertTrue(errors.containsKey("globalForeignRelayBpsLimit"))
+        assertTrue(errors.containsKey("globalInstanceRecvBpsLimit"))
     }
 
     @Test

@@ -11,6 +11,7 @@ import cc.ptoe.easytier.compose.data.GlobalSettings
 import cc.ptoe.easytier.compose.data.RuntimePeer
 import cc.ptoe.easytier.compose.data.RuntimeState
 import cc.ptoe.easytier.compose.data.RuntimeStatus
+import cc.ptoe.easytier.compose.data.WireGuardPortalInfo
 import cc.ptoe.easytier.compose.transport.RuntimeTransport
 import com.topjohnwu.superuser.ipc.RootService
 import kotlinx.coroutines.CancellationException
@@ -195,11 +196,14 @@ class RootTunTransport(private val context: Context) : RuntimeTransport {
         val peers = peersJson?.takeIf(String::isNotBlank)?.let { json ->
             runCatching { Json.decodeFromString(ListSerializer(RuntimePeer.serializer()), json) }.getOrDefault(emptyList())
         }.orEmpty()
+        val portal = wireguardPortalJson?.takeIf(String::isNotBlank)?.let { json ->
+            runCatching { Json.decodeFromString(WireGuardPortalInfo.serializer(), json) }.getOrNull()
+        }
         // Prefer the profileId reported by the daemon (matches the running instance);
         // fall back to the caller-supplied profile for the start flow where the daemon
         // hasn't reported yet.
         val effectiveProfileId = profileId ?: profile.id
-        return RuntimeStatus(state, effectiveProfileId, profile.tunMode, virtualIpv4, tunDevice, error, peers, hostname, natType)
+        return RuntimeStatus(state, effectiveProfileId, profile.tunMode, virtualIpv4, tunDevice, error, peers, hostname, natType, portal)
     }
 
     private fun error(profile: EasyTierProfile, message: String): RuntimeStatus =

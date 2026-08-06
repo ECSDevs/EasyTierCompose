@@ -6,9 +6,11 @@ import android.os.ParcelFileDescriptor
 import android.os.RemoteCallbackList
 import android.util.Log
 import cc.ptoe.easytier.compose.core.EasyTierJni
+import cc.ptoe.easytier.compose.core.WireGuardPortalClient
 import cc.ptoe.easytier.compose.core.networkInfo
 import cc.ptoe.easytier.compose.data.RuntimePeer
 import cc.ptoe.easytier.compose.data.RuntimeState
+import cc.ptoe.easytier.compose.data.WireGuardPortalInfo
 import com.topjohnwu.superuser.ipc.RootService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -94,13 +96,17 @@ class EasyTierRootService : RootService() {
     }
 
     private suspend fun startRoot(profileId: String, toml: String, spec: RootTunSpec) {
-        Log.i(TAG, "startRoot: profileId=$profileId ipv4Cidr=${spec.ipv4Cidr} mtu=${spec.mtu} manualRoutes=${spec.manualRoutes} proxyCidrs=${spec.proxyCidrs} magicDns=${spec.magicDns}")
+        Log.i(TAG, "startRoot: profileId=$profileId ipv4Cidr=${spec.ipv4Cidr} mtu=${spec.mtu} manualRoutes=${spec.manualRoutes} proxyCidrs=${spec.proxyCidrs} magicDns=${spec.magicDns} noTun=${spec.noTun}")
         active = true
         updateStatus(RootRuntimeStatus(RuntimeState.STARTING.name, profileId, null, null, null, null))
         runCatching {
             require(EasyTierJni.parseConfig(toml) == 0) { nativeError("EasyTier rejected configuration") }
             cleanupResources()
             updateStatus(RootRuntimeStatus(RuntimeState.STARTING.name, profileId, null, null, null, null))
+            if (spec.noTun) {
+                startNoTun(profileId, toml, spec)
+                return@runCatching
+            }
             // 1) Create easytier0.
             createTun(spec)
             // 2) Start EasyTier. The Rust core's Android filter_iface() now
@@ -122,6 +128,66 @@ class EasyTierRootService : RootService() {
             Log.e(TAG, "startRoot failed", it)
             failRoot(it.message ?: nativeError("Root EasyTier start failed"))
         }
+    }
+
+    /**
+     * No TUN variant: run the EasyTier core in the root daemon without creating
+     * easytier0 / routes / DHCP. The TOML already carries `no_tun = true` and
+     * `socket_mark = 0x20000`, so every core socket bypasses VpnService policy
+     * routing and uses the physical NIC — the core never goes through another
+     * proxy's TUN (which would happen if it ran in the app process).
+     */
+    private suspend fun startNoTun(profileId: String, toml: String, spec: RootTunSpec) {
+        Log.i(TAG, "startNoTun: profileId=$profileId")
+        require(EasyTierJni.runNetworkInstance(toml) == 0) { nativeError("EasyTier failed to start") }
+        updateStatus(RootRuntimeStatus(RuntimeState.RUNNING.name, profileId, null, null, null, null))
+        statusJob = scope.launch { pollNoTunStatus(profileId, spec) }
+    }
+
+    /** Status polling for the no-TUN path: no routes to sync, no TUN device. */
+    private suspend fun pollNoTunStatus(profileId: String, spec: RootTunSpec) {
+        while (currentStatus.get().state == RuntimeState.RUNNING.name) {
+            var shouldFail = false
+            var failMessage: String? = null
+            runCatching {
+                val info = EasyTierJni.collectNetworkInfos(1)?.networkInfo(profileId) ?: return@runCatching
+                if (!info.error.isNullOrBlank()) {
+                    Log.e(TAG, "pollNoTunStatus: EasyTier error: ${info.error}")
+                    shouldFail = true
+                    failMessage = info.error
+                    return@runCatching
+                }
+                val peersJson = if (info.peers.isNotEmpty()) {
+                    Json.encodeToString(ListSerializer(RuntimePeer.serializer()), info.peers)
+                } else {
+                    null
+                }
+                val portalJson = if (spec.wireguardPortal) {
+                    WireGuardPortalClient.fetch(profileId)?.let {
+                        Json.encodeToString(WireGuardPortalInfo.serializer(), it)
+                    }
+                } else {
+                    null
+                }
+                val status = currentStatus.get()
+                updateStatus(status.copy(
+                    virtualIpv4 = info.virtualIpv4 ?: status.virtualIpv4,
+                    peersJson = peersJson,
+                    hostname = info.hostname,
+                    natType = info.natType,
+                    profileId = profileId,
+                    wireguardPortalJson = portalJson,
+                ))
+            }.onFailure {
+                Log.e(TAG, "pollNoTunStatus failed", it)
+            }
+            if (shouldFail) {
+                failRoot(failMessage ?: "Root EasyTier error")
+                return
+            }
+            delay(5_000)
+        }
+        Log.w(TAG, "pollNoTunStatus: loop exited, state=${currentStatus.get().state}")
     }
 
     /** Creates easytier0 and retains its fd for setTunFd. */
@@ -198,8 +264,17 @@ class EasyTierRootService : RootService() {
                 } else {
                     null
                 }
+                // WireGuard portal credentials live in the root process where the
+                // EasyTier instance runs; fetch them here and pass them over AIDL.
+                val portalJson = if (spec.wireguardPortal) {
+                    WireGuardPortalClient.fetch(profileId)?.let {
+                        Json.encodeToString(WireGuardPortalInfo.serializer(), it)
+                    }
+                } else {
+                    null
+                }
                 val status = currentStatus.get()
-                updateStatus(status.copy(peersJson = peersJson, hostname = info.hostname, natType = info.natType, profileId = profileId))
+                updateStatus(status.copy(peersJson = peersJson, hostname = info.hostname, natType = info.natType, profileId = profileId, wireguardPortalJson = portalJson))
             }.onFailure {
                 Log.e(TAG, "pollStatus failed", it)
             }

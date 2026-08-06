@@ -54,9 +54,15 @@ class EasyTierRuntimeCoordinator(
         noTunActive = globalSettings.noTun
         mutableStatus.value = RuntimeStatus(RuntimeState.STARTING, effectiveProfile.id, effectiveProfile.tunMode, null, null, null)
         return@withLock when {
-            // no_tun: EasyTier core skips TUN creation; the app must match by not
-            // establishing VpnService/RootTun either, otherwise we'd still bring up
-            // a system VPN interface or easytier0 despite no_tun = true in TOML.
+            // Root mode under no_tun: run the core in the root daemon (no TUN
+            // device) so its sockets use the physical NIC via socket_mark,
+            // instead of being routed through VpnService / other proxy TUNs
+            // as they would be from the app process.
+            noTunActive && effectiveProfile.tunMode == TunMode.ROOT_TUN ->
+                startRoot(effectiveProfile, toml, globalSettings)
+            // no_tun + VPN_SERVICE: EasyTier core skips TUN creation; the app
+            // must match by not establishing VpnService either, otherwise we'd
+            // still bring up a system VPN interface despite no_tun = true.
             noTunActive -> startNoTun(effectiveProfile, toml)
             else -> when (effectiveProfile.tunMode) {
                 TunMode.VPN_SERVICE -> startVpn(effectiveProfile, toml, globalSettings)
@@ -143,7 +149,10 @@ class EasyTierRuntimeCoordinator(
         noTunActive = globalSettings.noTun
         val info = raw.networkInfo(profileId)
         when {
-            noTunActive -> {
+            // In-process no_tun adoption only applies to VPN_SERVICE sessions;
+            // ROOT_TUN runs the core in the root daemon (adopted via
+            // attachOrphanRoot instead), even under no_tun.
+            noTunActive && profile.tunMode == TunMode.VPN_SERVICE -> {
                 mutableStatus.value = RuntimeStatus(
                     state = RuntimeState.RUNNING,
                     profileId = profile.id,
@@ -228,13 +237,17 @@ class EasyTierRuntimeCoordinator(
         pollJob?.cancelAndJoin()
         pollJob = null
         val profile = activeProfile
-        if (noTunActive) {
+        // no_tun sessions started in-process (VPN_SERVICE tun mode) release the
+        // EasyTier instance here; ROOT_TUN sessions always live in the root
+        // daemon (including no_tun) and are stopped via root.stop() below.
+        if (noTunActive && profile?.tunMode != TunMode.ROOT_TUN) {
             mutableStatus.value = mutableStatus.value.copy(state = RuntimeState.STOPPING)
             runCatching { EasyTierJni.retainNetworkInstance(null) }
             noTunActive = false
             activeProfile = null
             return RuntimeStatus.Stopped.also { mutableStatus.value = it }
         }
+        noTunActive = false
         when (profile?.tunMode) {
             TunMode.VPN_SERVICE -> {
                 mutableStatus.value = mutableStatus.value.copy(state = RuntimeState.STOPPING)
@@ -266,6 +279,7 @@ class EasyTierRuntimeCoordinator(
                     } else {
                         mutableStatus.value = mutableStatus.value.copy(hostname = info.hostname, natType = info.natType)
                     }
+                    refreshWireGuardPortal(profile)
                 }
                 // STARTING polls faster to resolve the virtual IPv4 quickly; steady-state
                 // peers/latency change slowly, so 5s is enough and cuts JNI + JSON overhead.
@@ -277,6 +291,20 @@ class EasyTierRuntimeCoordinator(
     private fun pollRoot() {
         pollJob?.cancel()
         pollJob = scope.launch { root.status.collect { mutableStatus.value = it } }
+    }
+
+    /**
+     * Refreshes the WireGuard VPN portal info for profiles that configured one.
+     * collectNetworkInfos does not include the portal client config, so it is
+     * queried via VpnPortalRpc and attached to the current status. No-op when
+     * the portal is not configured or not started yet (fetch returns null).
+     */
+    private fun refreshWireGuardPortal(profile: EasyTierProfile) {
+        if (profile.vpnPortal == null) return
+        if (mutableStatus.value.state != RuntimeState.RUNNING) return
+        WireGuardPortalClient.fetch(profile.id)?.let { portal ->
+            mutableStatus.value = mutableStatus.value.copy(wireguardPortal = portal)
+        }
     }
 
     private fun pollNoTun() {
@@ -302,6 +330,7 @@ class EasyTierRuntimeCoordinator(
                         hostname = info.hostname,
                         natType = info.natType,
                     )
+                    refreshWireGuardPortal(profile)
                 }
                 delay(5_000)
             }

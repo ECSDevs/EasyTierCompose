@@ -11,6 +11,14 @@ data class RootTunSpec(
     val proxyCidrs: List<String>,
     val devName: String,
     val magicDns: Boolean,
+    // Whether the profile configured a WireGuard VPN portal; tells the root
+    // daemon to poll VpnPortalRpc so the app can show portal credentials.
+    val wireguardPortal: Boolean = false,
+    // No TUN mode: the daemon runs the EasyTier core without creating easytier0
+    // (no routes/DHCP/setTunFd). Used so the core's sockets use the physical
+    // NIC (via socket_mark in the root process) instead of being hijacked by
+    // VpnService / other proxy TUNs in the app process.
+    val noTun: Boolean = false,
 ) : Parcelable {
     constructor(parcel: Parcel) : this(
         parcel.readString(),
@@ -18,7 +26,9 @@ data class RootTunSpec(
         buildList { parcel.readStringList(this) },
         buildList { parcel.readStringList(this) },
         parcel.readString().orEmpty(),
-        parcel.createBooleanArray()?.firstOrNull() ?: false,
+        parcel.createBooleanArray()?.getOrNull(0) ?: false,
+        parcel.createBooleanArray()?.getOrNull(0) ?: false,
+        parcel.createBooleanArray()?.getOrNull(0) ?: false,
     )
 
     override fun writeToParcel(parcel: Parcel, flags: Int) {
@@ -28,6 +38,8 @@ data class RootTunSpec(
         parcel.writeStringList(proxyCidrs)
         parcel.writeString(devName)
         parcel.writeBooleanArray(booleanArrayOf(magicDns))
+        parcel.writeBooleanArray(booleanArrayOf(wireguardPortal))
+        parcel.writeBooleanArray(booleanArrayOf(noTun))
     }
 
     override fun describeContents() = 0
@@ -47,9 +59,12 @@ data class RootRuntimeStatus(
     val peersJson: String? = null,
     val hostname: String? = null,
     val natType: String? = null,
+    // JSON-encoded WireGuardPortalInfo, fetched by the root daemon via VpnPortalRpc.
+    val wireguardPortalJson: String? = null,
 ) : Parcelable {
     constructor(parcel: Parcel) : this(
         parcel.readString().orEmpty(),
+        parcel.readString(),
         parcel.readString(),
         parcel.readString(),
         parcel.readString(),
@@ -68,6 +83,7 @@ data class RootRuntimeStatus(
         parcel.writeString(peersJson)
         parcel.writeString(hostname)
         parcel.writeString(natType)
+        parcel.writeString(wireguardPortalJson)
     }
 
     override fun describeContents() = 0

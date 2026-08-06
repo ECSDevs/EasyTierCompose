@@ -45,6 +45,7 @@ internal fun ProfilesScreen(
     state: EasyTierUiState,
     add: () -> Unit,
     edit: (EasyTierProfile) -> Unit,
+    select: (EasyTierProfile) -> Unit,
     delete: (EasyTierProfile) -> Unit,
 ) {
     var pendingDelete by remember { mutableStateOf<EasyTierProfile?>(null) }
@@ -54,7 +55,7 @@ internal fun ProfilesScreen(
             items(state.profiles, key = { it.id }) { profile ->
                 val isSelected = profile.id == state.selectedProfileId
                 OutlinedCard(
-                    onClick = { edit(profile) },
+                    onClick = { select(profile) },
                     modifier = Modifier.fillMaxWidth().semantics { contentDescription = "profile_${profile.id}" },
                     shape = MaterialTheme.shapes.large,
                     colors = CardDefaults.outlinedCardColors(

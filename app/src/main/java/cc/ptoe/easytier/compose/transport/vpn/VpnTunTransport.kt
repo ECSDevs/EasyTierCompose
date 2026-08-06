@@ -29,9 +29,13 @@ class VpnTunTransport(
     // 2 seconds from the poll loop.
     private var establishedIpv4Cidr: String? = null
     private var establishedRoutes: List<String> = emptyList()
+    // MTU moved to GlobalSettings; cached at start() so the poll loop's
+    // establishWhenResolved() calls can reuse it without threading settings through.
+    private var activeMtu: Int = DEFAULT_MTU
 
     override suspend fun start(profile: EasyTierProfile, toml: String, globalSettings: GlobalSettings): RuntimeStatus {
         running = true
+        activeMtu = globalSettings.mtu
         establishedIpv4Cidr = null
         establishedRoutes = emptyList()
         val ipv4Cidr = profile.virtualIpv4?.takeIf { !profile.dhcp }
@@ -79,7 +83,7 @@ class VpnTunTransport(
         establishedRoutes = routes
         ContextCompat.startForegroundService(
             context,
-            EasyTierVpnService.intent(context, profile.id, ipv4Cidr, routes, profile.enableMagicDns, profile.mtu),
+            EasyTierVpnService.intent(context, profile.id, ipv4Cidr, routes, profile.enableMagicDns, activeMtu),
         )
         return RuntimeStatus(RuntimeState.RUNNING, profile.id, profile.tunMode, ipv4Cidr, "Android VPN", null)
             .also { mutableStatus.value = it }
@@ -97,5 +101,9 @@ class VpnTunTransport(
         if (ipv4Cidr == null) return RuntimeStatus(RuntimeState.STARTING, profile.id, profile.tunMode, null, null, null)
             .also { mutableStatus.value = it }
         return establishWhenResolved(profile, ipv4Cidr, routes)
+    }
+
+    private companion object {
+        const val DEFAULT_MTU = 1380
     }
 }

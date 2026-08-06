@@ -39,8 +39,6 @@ object TomlConfigBuilder {
         if (profile.ipv6PublicAddrProvider) append("ipv6_public_addr_provider = true\n")
         if (profile.ipv6PublicAddrAuto) append("ipv6_public_addr_auto = true\n")
         profile.ipv6PublicAddrPrefix?.trim()?.takeIf { it.isNotEmpty() }?.let { appendTomlString("ipv6_public_addr_prefix", it) }
-        val socks5Host = if (globalSettings.socks5AllowLan) "0.0.0.0" else "127.0.0.1"
-        appendTomlString("socks5_proxy", "socks5://$socks5Host:${globalSettings.socks5Port}")
 
         append("\n[network_identity]\n")
         appendTomlString("network_name", profile.networkName.trim())
@@ -87,11 +85,15 @@ object TomlConfigBuilder {
         appendTomlString("dev_name", globalSettings.tunDeviceName.trim())
         append("enable_encryption = ${profile.enableEncryption}\n")
         append("enable_ipv6 = ${profile.enableIpv6}\n")
-        append("mtu = ${profile.mtu}\n")
+        append("mtu = ${globalSettings.mtu}\n")
         append("latency_first = ${profile.latencyFirst}\n")
         append("enable_exit_node = ${profile.enableExitNode}\n")
         append("no_tun = ${globalSettings.noTun}\n")
         append("use_smoltcp = false\n")
+        // Magic DNS requires a TUN interface to intercept DNS queries. In
+        // no_tun mode there is no TUN, so accept_dns must be false to avoid
+        // starting a Magic DNS server that cannot function.
+        val effectiveAcceptDns = profile.enableMagicDns && !globalSettings.noTun
         appendTomlString("relay_network_whitelist", profile.relayNetworkWhitelist)
         append("disable_p2p = ${profile.disableP2p}\n")
         append("p2p_only = ${profile.p2pOnly}\n")
@@ -101,12 +103,20 @@ object TomlConfigBuilder {
         append("disable_udp_hole_punching = ${profile.disableUdpHolePunching}\n")
         append("disable_sym_hole_punching = ${profile.disableSymHolePunching}\n")
         append("disable_upnp = ${profile.disableUpnp}\n")
-        append("multi_thread = ${profile.multiThread}\n")
-        append("multi_thread_count = ${profile.multiThreadCount}\n")
+        append("multi_thread = ${globalSettings.multiThread}\n")
+        append("multi_thread_count = ${globalSettings.multiThreadCount}\n")
         append("data_compress_algo = \"${profile.dataCompressAlgo.name}\"\n")
-        // Root TUN mode: disable bind_device (SO_BINDTODEVICE) and set a fwmark
-        // so Android's policy routing routes traffic through the physical
-        // interface, bypassing VpnService/mihomo TUNs.
+        // bind_device (SO_BINDTODEVICE) requires CAP_NET_RAW, which neither the
+        // app process (VPN_SERVICE / no_tun) nor the root process needs to use
+        // except for the ROOT_TUN physical-routing path. In no_tun mode there
+        // is no TUN device to bind to, so bind_device must be false regardless
+        // of tunMode — otherwise EasyTier fails with EPERM on every socket.
+        //
+        // Root mode: disable bind_device and set a fwmark so Android's
+        // policy routing routes traffic through the physical interface,
+        // bypassing VpnService/mihomo TUNs. This applies to no_tun as well:
+        // the core then runs in the root daemon and must keep using the
+        // physical NIC instead of any system VPN/proxy TUN.
         //
         // Android's VpnService installs ip rule:
         //   13000: from all fwmark 0x0/0x20000 uidrange 0-99999 lookup tun0
@@ -116,35 +126,30 @@ object TomlConfigBuilder {
         //   31000: from all fwmark 0x0/0xffff lookup wlan0
         // (0x20000 & 0xffff == 0), which routes through the physical interface.
         //
-        // bind_device=false avoids SO_BINDTODEVICE to tun0 and lets the fwmark
-        // handle routing entirely. No Rust core changes or .so rebuild needed.
+        // socket_mark bypasses Android's VpnService policy routing via fwmark.
+        // setsockopt(SO_MARK) requires CAP_NET_ADMIN, which only the root
+        // process has. ROOT_TUN sessions always run in the root daemon
+        // (including no_tun), so the mark can always be applied.
+        val effectiveBindDevice = !globalSettings.noTun &&
+            profile.tunMode != TunMode.ROOT_TUN &&
+            profile.bindDevice
+        append("bind_device = $effectiveBindDevice\n")
         if (profile.tunMode == TunMode.ROOT_TUN) {
-            append("bind_device = false\n")
-            // socket_mark bypasses Android's VpnService policy routing via fwmark.
-            // setsockopt(SO_MARK) requires CAP_NET_ADMIN, which only the root
-            // process has. In no_tun mode EasyTier runs in the app process
-            // (without root) and no TUN is established, so the fwmark is both
-            // unnecessary and impossible to apply — omit it or EasyTier fails
-            // with EPERM ("oserror operation not permitted").
-            if (!globalSettings.noTun) {
-                append("socket_mark = ${ROOT_TUN_SOCKET_MARK}\n")
-            }
-        } else {
-            append("bind_device = ${profile.bindDevice}\n")
+            append("socket_mark = ${ROOT_TUN_SOCKET_MARK}\n")
         }
         append("enable_kcp_proxy = ${profile.enableKcpProxy}\n")
         append("disable_kcp_input = ${profile.disableKcpInput}\n")
         append("disable_relay_kcp = ${profile.disableRelayKcp}\n")
         append("enable_relay_foreign_network_kcp = ${profile.enableRelayForeignNetworkKcp}\n")
         append("proxy_forward_by_system = ${profile.proxyForwardBySystem}\n")
-        append("accept_dns = ${profile.enableMagicDns}\n")
+        append("accept_dns = $effectiveAcceptDns\n")
         append("private_mode = ${profile.privateMode}\n")
         append("enable_quic_proxy = ${profile.enableQuicProxy}\n")
         append("disable_quic_input = ${profile.disableQuicInput}\n")
         append("disable_relay_quic = ${profile.disableRelayQuic}\n")
         append("enable_relay_foreign_network_quic = ${profile.enableRelayForeignNetworkQuic}\n")
-        append("foreign_relay_bps_limit = ${profile.foreignRelayBpsLimit}\n")
-        append("instance_recv_bps_limit = ${profile.instanceRecvBpsLimit}\n")
+        append("foreign_relay_bps_limit = ${globalSettings.foreignRelayBpsLimit}\n")
+        append("instance_recv_bps_limit = ${globalSettings.instanceRecvBpsLimit}\n")
         appendTomlString("encryption_algorithm", profile.encryptionAlgorithm.toTomlString())
         appendTomlString("tld_dns_zone", profile.tldDnsZone.trim())
         append("disable_relay_data = ${profile.disableRelayData}\n")
@@ -156,11 +161,14 @@ object TomlConfigBuilder {
         globalSettings: GlobalSettings = GlobalSettings(),
     ): RootTunSpec = RootTunSpec(
         ipv4Cidr = profile.virtualIpv4?.trim(),
-        mtu = profile.mtu,
+        mtu = globalSettings.mtu,
         manualRoutes = profile.manualRoutes.map(String::trim),
         proxyCidrs = profile.proxyNetworks.map { it.cidr.trim() },
         devName = globalSettings.tunDeviceName.trim().ifBlank { "easytier0" },
-        magicDns = profile.enableMagicDns,
+        // Magic DNS needs a TUN to intercept DNS; impossible in no_tun mode.
+        magicDns = profile.enableMagicDns && !globalSettings.noTun,
+        wireguardPortal = profile.vpnPortal != null,
+        noTun = globalSettings.noTun,
     )
 
     private fun StringBuilder.appendTomlArray(key: String, values: List<String>) {

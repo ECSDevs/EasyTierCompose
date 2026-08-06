@@ -14,5 +14,11 @@ object EasyTierJNI {
     @JvmStatic external fun runNetworkInstance(config: String): Int
     @JvmStatic external fun retainNetworkInstance(instanceNames: Array<String>?): Int
     @JvmStatic external fun collectNetworkInfos(maxLength: Int): String?
+    @JvmStatic external fun callJsonRpc(
+        serviceName: String,
+        methodName: String,
+        domainName: String?,
+        payloadJson: String,
+    ): String?
     @JvmStatic external fun getLastError(): String?
 }

@@ -14,6 +14,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -226,6 +227,7 @@ fun EasyTierApp(
                             state = state,
                             add = { viewModel.beginCreate(); destination = Destination.Editor },
                             edit = { viewModel.beginEdit(it); destination = Destination.Editor },
+                            select = { viewModel.selectProfile(it.id) },
                             delete = viewModel::delete,
                         )
                         Destination.Peers -> PeersScreen(state = state)
@@ -246,6 +248,7 @@ fun EasyTierApp(
                         Box(
                             Modifier
                                 .fillMaxSize()
+                                .background(MaterialTheme.colorScheme.surface)
                                 .graphicsLayer {
                                     val p = editorAnim.value
                                     val bp = backProgress.value
