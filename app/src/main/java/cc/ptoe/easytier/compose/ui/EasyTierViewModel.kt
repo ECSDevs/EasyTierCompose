@@ -11,8 +11,6 @@ import cc.ptoe.easytier.compose.data.ProfileRepository
 import cc.ptoe.easytier.compose.data.RuntimeState
 import cc.ptoe.easytier.compose.data.RuntimeStatus
 import cc.ptoe.easytier.compose.data.TunMode
-import cc.ptoe.easytier.compose.transport.RuntimeEffect
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -39,7 +37,6 @@ class EasyTierViewModel(
     private val draft = MutableStateFlow<EasyTierProfile?>(null)
     private val errors = MutableStateFlow<Map<String, String>>(emptyMap())
     private val globalSettings = MutableStateFlow(GlobalSettings())
-    val effects = MutableSharedFlow<RuntimeEffect>()
 
     val state: StateFlow<EasyTierUiState> = combine(
         repository.profiles,
@@ -62,15 +59,23 @@ class EasyTierViewModel(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), EasyTierUiState())
 
     init {
-        viewModelScope.launch { coordinator.effects.collect { effects.emit(it) } }
         viewModelScope.launch {
             globalSettingsRepository.settings.collect { globalSettings.value = it }
         }
-        // On app launch, try to adopt a root daemon orphaned by a previous process
-        // (Root TUN mode runs in a libsu daemon process that survives app death).
-        // Wait for profiles to load first so we can match the orphan's profileId.
+        // On app launch, try to adopt an EasyTier instance left running by a previous
+        // process or BootCompletedReceiver. Two attach paths:
+        //  1. attachRunningInstance: in-process EasyTier core (VPN_SERVICE / no_tun mode
+        //     started by BootCompletedReceiver while the app process was still alive).
+        //  2. attachOrphanRoot: ROOT_TUN mode runs in a libsu daemon process that
+        //     survives app death; bind to it and resume polling.
+        // Wait for profiles + settings to load first so we can match the profileId and
+        // know whether no_tun was active. attachRunningInstance is attempted first: on
+        // success it sets activeProfile and attachOrphanRoot becomes a no-op, avoiding
+        // a needless bind to an empty root daemon in VPN_SERVICE / no_tun modes.
         viewModelScope.launch {
             val profiles = repository.profiles.first()
+            val settings = globalSettingsRepository.settings.first()
+            coordinator.attachRunningInstance(settings) { id -> profiles.firstOrNull { it.id == id } }
             coordinator.attachOrphanRoot { id -> profiles.firstOrNull { it.id == id } }
         }
     }
@@ -115,7 +120,6 @@ class EasyTierViewModel(
 
     fun connect() = viewModelScope.launch { selectedProfile()?.let { coordinator.start(it, globalSettings.value) } }
     fun disconnect() = viewModelScope.launch { coordinator.stop() }
-    fun onVpnPermissionResult(granted: Boolean) = viewModelScope.launch { coordinator.onVpnPermissionResult(granted) }
     fun resetProfiles() = viewModelScope.launch { coordinator.stop(); repository.reset(); selectedId.value = null }
     private fun selectedProfile() = state.value.profiles.firstOrNull { it.id == state.value.selectedProfileId }
 }

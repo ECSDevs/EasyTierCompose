@@ -57,7 +57,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import cc.ptoe.easytier.compose.data.RuntimeState
-import cc.ptoe.easytier.compose.transport.RuntimeEffect
 import cc.ptoe.easytier.compose.ui.screens.DashboardScreen
 import cc.ptoe.easytier.compose.ui.screens.PeersScreen
 import cc.ptoe.easytier.compose.ui.screens.ProfileEditorScreen
@@ -77,7 +76,6 @@ private enum class Destination(val label: String, val icon: ImageVector) {
 @Composable
 fun EasyTierApp(
     viewModel: EasyTierViewModel,
-    requestVpnPermission: (android.content.Intent) -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
     var destination by remember { mutableStateOf(Destination.Dashboard) }
@@ -86,11 +84,6 @@ fun EasyTierApp(
         state.runtime.profileId == draft.id && state.runtime.state in setOf(RuntimeState.STARTING, RuntimeState.RUNNING)
     } ?: false
 
-    LaunchedEffect(viewModel) {
-        viewModel.effects.collect { effect ->
-            if (effect is RuntimeEffect.RequestVpnPermission) requestVpnPermission(effect.intent)
-        }
-    }
     LaunchedEffect(state.draft) {
         if (state.draft == null && destination == Destination.Editor) destination = Destination.Profiles
     }

@@ -13,21 +13,25 @@ import cc.ptoe.easytier.compose.data.RuntimeState
 import cc.ptoe.easytier.compose.data.RuntimeStatus
 import cc.ptoe.easytier.compose.transport.RuntimeTransport
 import com.topjohnwu.superuser.ipc.RootService
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
-import kotlin.coroutines.resume
 
 class RootTunTransport(private val context: Context) : RuntimeTransport {
     private val mutableStatus = MutableStateFlow(RuntimeStatus.Stopped)
     override val status: StateFlow<RuntimeStatus> = mutableStatus.asStateFlow()
-    private var service: IEasyTierRootService? = null
+    // @Volatile: onServiceConnected writes this on the main thread, while bind()
+    // polls it on Dispatchers.IO. Without volatile the IO thread may never see the
+    // assignment, causing bind() to spin until its 15s timeout.
+    @Volatile private var service: IEasyTierRootService? = null
     private var bound = false
     // @Volatile: the status callback fires on a Binder thread, while start/adopt/stop
     // mutate this on the caller's thread. Volatile gives the callback a consistent view.
@@ -46,7 +50,7 @@ class RootTunTransport(private val context: Context) : RuntimeTransport {
         activeProfile = profile
         mutableStatus.value = RuntimeStatus(RuntimeState.STARTING, profile.id, profile.tunMode, null, null, null)
         val remote = bind() ?: return error(profile, "Root helper disconnected")
-        return runCatching {
+        return try {
             registerCallback(remote)
             remote.start(profile.id, toml, TomlConfigBuilder.rootTunSpec(profile, globalSettings))
             // Wait for the daemon to reach RUNNING or ERROR. registerStatusCallback
@@ -62,9 +66,16 @@ class RootTunTransport(private val context: Context) : RuntimeTransport {
                 stop()
                 error(profile, "Root helper start timed out")
             }
-        }.getOrElse {
+        } catch (cancellation: CancellationException) {
+            // External cancellation (e.g. BootCompletedReceiver's 8s budget): the caller
+            // intentionally bailed without waiting for startup to complete. The daemon
+            // has already received `remote.start(...)` and will continue initializing in
+            // its own root process — do NOT stop it. A later app launch re-attaches via
+            // attachOrphanRoot().
+            throw cancellation
+        } catch (e: Throwable) {
             stop()
-            error(profile, it.message ?: "Root helper disconnected")
+            error(profile, e.message ?: "Root helper disconnected")
         }
     }
 
@@ -115,9 +126,9 @@ class RootTunTransport(private val context: Context) : RuntimeTransport {
         mutableStatus.value = RuntimeStatus.Stopped
     }
 
-    private fun unbindInternal() {
+    private suspend fun unbindInternal() {
         unregisterCallback()
-        if (bound) RootService.unbind(connection)
+        if (bound) withContext(Dispatchers.Main) { RootService.unbind(connection) }
         bound = false
         service = null
     }
@@ -159,16 +170,23 @@ class RootTunTransport(private val context: Context) : RuntimeTransport {
 
     private suspend fun bind(): IEasyTierRootService? {
         service?.let { return it }
-        return withTimeoutOrNull(15_000) {
-            suspendCancellableCoroutine { continuation ->
+        // RootService.bind/unbind enforce main-thread access (libsu RootServiceManager
+        // checks the calling thread). The coordinator runs on Dispatchers.IO, so we
+        // hop to the main dispatcher for the actual bind call and wait for
+        // onServiceConnected (invoked on the main thread) to populate `service`.
+        if (!bound) {
+            withContext(Dispatchers.Main) {
                 RootService.bind(daemonIntent(), connection)
                 bound = true
-                Thread {
-                    while (service == null && continuation.isActive) Thread.sleep(50)
-                    service?.let { continuation.resume(it) }
-                }.start()
-                continuation.invokeOnCancellation { if (bound) RootService.unbind(connection) }
             }
+        }
+        return withTimeoutOrNull(15_000) {
+            while (service == null) delay(50)
+            service
+        } ?: run {
+            // Timed out waiting for onServiceConnected — unbind to avoid leaking.
+            unbindInternal()
+            null
         }
     }
 

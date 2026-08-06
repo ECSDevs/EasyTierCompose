@@ -1,6 +1,5 @@
 package cc.ptoe.easytier.compose.transport.vpn
 
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.VpnService
@@ -9,21 +8,17 @@ import cc.ptoe.easytier.compose.data.EasyTierProfile
 import cc.ptoe.easytier.compose.data.GlobalSettings
 import cc.ptoe.easytier.compose.data.RuntimeState
 import cc.ptoe.easytier.compose.data.RuntimeStatus
-import cc.ptoe.easytier.compose.transport.RuntimeEffect
 import cc.ptoe.easytier.compose.transport.RuntimeTransport
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-class VpnTunTransport(private val context: Context, private val activity: Activity) : RuntimeTransport {
+class VpnTunTransport(
+    private val context: Context,
+    private val permissionRequester: VpnPermissionRequester,
+) : RuntimeTransport {
     private val mutableStatus = MutableStateFlow(RuntimeStatus.Stopped)
     override val status: StateFlow<RuntimeStatus> = mutableStatus.asStateFlow()
-    private val mutableEffects = MutableSharedFlow<RuntimeEffect>()
-    val effects: SharedFlow<RuntimeEffect> = mutableEffects.asSharedFlow()
-    private var pending: PendingStart? = null
 
     // Guards against establishWhenResolved racing with stop(): once running flips to
     // false, no further startForegroundService intents are posted, so stopService()
@@ -39,22 +34,38 @@ class VpnTunTransport(private val context: Context, private val activity: Activi
         running = true
         establishedIpv4Cidr = null
         establishedRoutes = emptyList()
-        val prepared = VpnService.prepare(context)
         val ipv4Cidr = profile.virtualIpv4?.takeIf { !profile.dhcp }
+        val prepared = VpnService.prepare(context)
         if (prepared != null) {
-            pending = PendingStart(profile, ipv4Cidr, emptyList())
-            mutableEffects.emit(RuntimeEffect.RequestVpnPermission(prepared))
-            return RuntimeStatus(RuntimeState.STARTING, profile.id, profile.tunMode, null, null, null).also { mutableStatus.value = it }
+            // Synchronously request VPN permission. In the foreground this launches
+            // the system consent dialog via the injected requester; from a background
+            // context (e.g. boot) the no-op requester returns false and we surface
+            // an ERROR — the user must open the app once to grant permission.
+            mutableStatus.value = RuntimeStatus(RuntimeState.STARTING, profile.id, profile.tunMode, null, null, null)
+            val granted = permissionRequester.request(prepared)
+            if (!granted) {
+                return RuntimeStatus(RuntimeState.ERROR, profile.id, profile.tunMode, null, null, "VPN permission denied")
+                    .also { running = false; mutableStatus.value = it }
+            }
         }
         return startPrepared(profile, ipv4Cidr, emptyList())
     }
 
-    suspend fun onPermissionResult(granted: Boolean): RuntimeStatus {
-        val start = pending ?: return mutableStatus.value
-        pending = null
-        if (!granted) return RuntimeStatus(RuntimeState.ERROR, start.profile.id, start.profile.tunMode, null, null, "VPN permission denied")
+    /**
+     * Adopts an already-running VPN session started by another coordinator instance
+     * (e.g. BootCompletedReceiver). EasyTierVpnService FGS is already running with the
+     * VPN interface established, so we restore [running] and the established address/
+     * routes to prevent establishWhenResolved() from redundantly re-launching the FGS
+     * with the same parameters.
+     */
+    fun adopt(profile: EasyTierProfile, ipv4Cidr: String?, routes: List<String>): RuntimeStatus {
+        running = true
+        establishedIpv4Cidr = ipv4Cidr
+        establishedRoutes = routes
+        val state = if (ipv4Cidr.isNullOrBlank()) RuntimeState.STARTING else RuntimeState.RUNNING
+        val tunDevice = if (ipv4Cidr.isNullOrBlank()) null else "Android VPN"
+        return RuntimeStatus(state, profile.id, profile.tunMode, ipv4Cidr, tunDevice, null)
             .also { mutableStatus.value = it }
-        return startPrepared(start.profile, start.ipv4Cidr, start.routes)
     }
 
     fun establishWhenResolved(profile: EasyTierProfile, ipv4Cidr: String, routes: List<String>): RuntimeStatus {
@@ -78,7 +89,6 @@ class VpnTunTransport(private val context: Context, private val activity: Activi
         running = false
         establishedIpv4Cidr = null
         establishedRoutes = emptyList()
-        pending = null
         context.stopService(Intent(context, EasyTierVpnService::class.java))
         mutableStatus.value = RuntimeStatus.Stopped
     }
@@ -88,6 +98,4 @@ class VpnTunTransport(private val context: Context, private val activity: Activi
             .also { mutableStatus.value = it }
         return establishWhenResolved(profile, ipv4Cidr, routes)
     }
-
-    private data class PendingStart(val profile: EasyTierProfile, val ipv4Cidr: String?, val routes: List<String>)
 }

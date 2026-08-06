@@ -1,49 +1,46 @@
 package cc.ptoe.easytier.compose.core
 
-import android.app.Activity
 import android.content.Context
 import cc.ptoe.easytier.compose.data.EasyTierProfile
 import cc.ptoe.easytier.compose.data.GlobalSettings
 import cc.ptoe.easytier.compose.data.RuntimeState
 import cc.ptoe.easytier.compose.data.RuntimeStatus
 import cc.ptoe.easytier.compose.data.TunMode
-import cc.ptoe.easytier.compose.transport.RuntimeEffect
 import cc.ptoe.easytier.compose.transport.root.RootTunTransport
+import cc.ptoe.easytier.compose.transport.vpn.VpnPermissionRequester
 import cc.ptoe.easytier.compose.transport.vpn.VpnTunTransport
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
-class EasyTierRuntimeCoordinator(private val context: Context, activity: Activity) {
+class EasyTierRuntimeCoordinator(
+    private val context: Context,
+    permissionRequester: VpnPermissionRequester,
+) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutex = Mutex()
-    private val vpn = VpnTunTransport(context, activity)
+    private val vpn = VpnTunTransport(context, permissionRequester)
     private val root = RootTunTransport(context)
     private val mutableStatus = MutableStateFlow(RuntimeStatus.Stopped)
     val status: StateFlow<RuntimeStatus> = mutableStatus.asStateFlow()
-    private val mutableEffects = MutableSharedFlow<RuntimeEffect>()
-    val effects: SharedFlow<RuntimeEffect> = mutableEffects.asSharedFlow()
     private var activeProfile: EasyTierProfile? = null
     private var pollJob: Job? = null
     // Tracks whether the active session took the no-TUN path (globalSettings.noTun = true),
     // so stopLocked() can release the EasyTier instance without touching VpnService/RootTun.
     private var noTunActive: Boolean = false
-
-    init {
-        scope.launch { vpn.effects.collect { mutableEffects.emit(it) } }
-    }
 
     suspend fun start(profile: EasyTierProfile, globalSettings: GlobalSettings = GlobalSettings()): RuntimeStatus = mutex.withLock {
         // Auto-fill hostname from the Android device name when the profile leaves it blank,
@@ -67,6 +64,19 @@ class EasyTierRuntimeCoordinator(private val context: Context, activity: Activit
             }
         }
     }
+
+    /**
+     * Launches [start] in the coordinator's own [scope] (SupervisorJob + Dispatchers.IO),
+     * decoupled from the caller's coroutine context. The returned [Job] can be awaited
+     * for completion but cancelling it does NOT abort the start operation — the
+     * SupervisorJob keeps [start] running until it settles on its own.
+     *
+     * Used by [BootCompletedReceiver] so its 8s `withTimeoutOrNull` wait only abandons
+     * *waiting* for the result, not the start operation itself. This ensures `bind()`
+     * and `remote.start(...)` complete even when boot-time root process startup is slow.
+     */
+    fun startDetached(profile: EasyTierProfile, globalSettings: GlobalSettings = GlobalSettings()): Job =
+        scope.launch { start(profile, globalSettings) }
 
     suspend fun stop(): RuntimeStatus = mutex.withLock { stopLocked() }
 
@@ -97,11 +107,68 @@ class EasyTierRuntimeCoordinator(private val context: Context, activity: Activit
         if (status.state == RuntimeState.RUNNING || status.state == RuntimeState.STARTING) pollRoot()
     }
 
-    suspend fun onVpnPermissionResult(granted: Boolean): RuntimeStatus = mutex.withLock {
-        val result = vpn.onPermissionResult(granted)
-        mutableStatus.value = result
-        if (result.state == RuntimeState.RUNNING || result.state == RuntimeState.STARTING) pollVpn()
-        result
+    /**
+     * Attempts to adopt an EasyTier instance already running in-process (started by
+     * BootCompletedReceiver in VPN_SERVICE or no_tun mode). Detects a running instance
+     * via collectNetworkInfos, matches its profileId via [profileLookup], and resumes
+     * polling without re-establishing the TUN/VPN interface.
+     *
+     * Safe to call on every app launch: it is a no-op when no in-process instance is
+     * running (collectNetworkInfos returns null/empty) and when the active transport
+     * is ROOT_TUN (handled by [attachOrphanRoot] instead, since the EasyTier core in
+     * ROOT_TUN mode lives in the root daemon process, not in the app process).
+     */
+    suspend fun attachRunningInstance(
+        globalSettings: GlobalSettings,
+        profileLookup: suspend (String) -> EasyTierProfile?,
+    ) = mutex.withLock {
+        if (activeProfile != null) return@withLock
+        val raw = runCatching { EasyTierJni.collectNetworkInfos(1) }.getOrNull() ?: return@withLock
+        val map = runCatching {
+            Json.parseToJsonElement(raw).jsonObject["map"]?.jsonObject
+        }.getOrNull() ?: return@withLock
+        if (map.isEmpty()) return@withLock
+        // Find the first running instance without an error.
+        val entry = map.entries.firstOrNull { (_, value) ->
+            val obj = value.jsonObject
+            obj["error_msg"]?.jsonPrimitive?.content.isNullOrBlank()
+        } ?: return@withLock
+        val profileId = entry.key
+        val profile = profileLookup(profileId) ?: run {
+            // Instance running but profile deleted — release it so it doesn't linger.
+            EasyTierJni.retainNetworkInstance(null)
+            return@withLock
+        }
+        activeProfile = profile
+        noTunActive = globalSettings.noTun
+        val info = raw.networkInfo(profileId)
+        when {
+            noTunActive -> {
+                mutableStatus.value = RuntimeStatus(
+                    state = RuntimeState.RUNNING,
+                    profileId = profile.id,
+                    tunMode = profile.tunMode,
+                    virtualIpv4 = info?.virtualIpv4,
+                    tunDevice = null,
+                    error = null,
+                    peers = info?.peers.orEmpty(),
+                    hostname = info?.hostname,
+                    natType = info?.natType,
+                )
+                pollNoTun()
+            }
+            profile.tunMode == TunMode.VPN_SERVICE -> {
+                val status = vpn.adopt(profile, info?.virtualIpv4, info?.routes.orEmpty())
+                mutableStatus.value = status
+                if (status.state == RuntimeState.RUNNING || status.state == RuntimeState.STARTING) pollVpn()
+            }
+            else -> {
+                // ROOT_TUN should not reach here (EasyTier runs in the root daemon
+                // process, not in-process). Clear state so attachOrphanRoot can handle it.
+                activeProfile = null
+                noTunActive = false
+            }
+        }
     }
 
     private suspend fun startVpn(profile: EasyTierProfile, toml: String, globalSettings: GlobalSettings): RuntimeStatus = try {
@@ -111,6 +178,12 @@ class EasyTierRuntimeCoordinator(private val context: Context, activity: Activit
             mutableStatus.value = it
             if (it.state == RuntimeState.STARTING || it.state == RuntimeState.RUNNING) pollVpn()
         }
+    } catch (cancellation: CancellationException) {
+        // External cancellation (e.g. BootCompletedReceiver's 8s budget): the EasyTier
+        // core is already running in-process — do NOT release it or stop the VPN. The
+        // caller intentionally bailed without waiting; a later app launch re-attaches
+        // via attachRunningInstance().
+        throw cancellation
     } catch (error: Throwable) {
         vpn.stop()
         runCatching { EasyTierJni.retainNetworkInstance(null) }
@@ -136,6 +209,12 @@ class EasyTierRuntimeCoordinator(private val context: Context, activity: Activit
         mutableStatus.value = RuntimeStatus(RuntimeState.RUNNING, profile.id, profile.tunMode, null, null, null)
         pollNoTun()
         mutableStatus.value
+    } catch (cancellation: CancellationException) {
+        // External cancellation (e.g. BootCompletedReceiver's 8s budget): the EasyTier
+        // core is already running in-process — do NOT release it. The caller
+        // intentionally bailed without waiting; a later app launch re-attaches via
+        // attachRunningInstance().
+        throw cancellation
     } catch (error: Throwable) {
         runCatching { EasyTierJni.retainNetworkInstance(null) }
         failure(profile, error.message ?: nativeError("EasyTier failed to start"))
@@ -212,6 +291,12 @@ class EasyTierRuntimeCoordinator(private val context: Context, activity: Activit
                         return@launch
                     }
                     // No TUN to establish: just surface runtime metadata for the UI.
+                    // EasyTier still assigns a virtual IPv4 even without a TUN device,
+                    // so propagate it (the poll only sets it when resolved, preserving
+                    // the previous value when collectNetworkInfos returns null).
+                    info.virtualIpv4?.let { ipv4 ->
+                        mutableStatus.value = mutableStatus.value.copy(virtualIpv4 = ipv4)
+                    }
                     mutableStatus.value = mutableStatus.value.copy(
                         peers = info.peers,
                         hostname = info.hostname,
