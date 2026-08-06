@@ -37,6 +37,9 @@ class EasyTierRuntimeCoordinator(private val context: Context, activity: Activit
     val effects: SharedFlow<RuntimeEffect> = mutableEffects.asSharedFlow()
     private var activeProfile: EasyTierProfile? = null
     private var pollJob: Job? = null
+    // Tracks whether the active session took the no-TUN path (globalSettings.noTun = true),
+    // so stopLocked() can release the EasyTier instance without touching VpnService/RootTun.
+    private var noTunActive: Boolean = false
 
     init {
         scope.launch { vpn.effects.collect { mutableEffects.emit(it) } }
@@ -51,10 +54,17 @@ class EasyTierRuntimeCoordinator(private val context: Context, activity: Activit
         val toml = TomlConfigBuilder.build(effectiveProfile, globalSettings)
         stopLocked()
         activeProfile = effectiveProfile
+        noTunActive = globalSettings.noTun
         mutableStatus.value = RuntimeStatus(RuntimeState.STARTING, effectiveProfile.id, effectiveProfile.tunMode, null, null, null)
-        return@withLock when (effectiveProfile.tunMode) {
-            TunMode.VPN_SERVICE -> startVpn(effectiveProfile, toml, globalSettings)
-            TunMode.ROOT_TUN -> startRoot(effectiveProfile, toml, globalSettings)
+        return@withLock when {
+            // no_tun: EasyTier core skips TUN creation; the app must match by not
+            // establishing VpnService/RootTun either, otherwise we'd still bring up
+            // a system VPN interface or easytier0 despite no_tun = true in TOML.
+            noTunActive -> startNoTun(effectiveProfile, toml)
+            else -> when (effectiveProfile.tunMode) {
+                TunMode.VPN_SERVICE -> startVpn(effectiveProfile, toml, globalSettings)
+                TunMode.ROOT_TUN -> startRoot(effectiveProfile, toml, globalSettings)
+            }
         }
     }
 
@@ -114,6 +124,23 @@ class EasyTierRuntimeCoordinator(private val context: Context, activity: Activit
         return status
     }
 
+    /**
+     * no_tun path: start the EasyTier core only, with no VpnService/RootTun attached.
+     * The core still publishes virtual_ipv4 / peers / hostname / natType via
+     * collectNetworkInfos, so we poll those for UI updates — but never call
+     * establishWhenResolved() or root.setTunFd(), leaving the system without a TUN.
+     */
+    private suspend fun startNoTun(profile: EasyTierProfile, toml: String): RuntimeStatus = try {
+        EasyTierJni.retainNetworkInstance(null)
+        require(EasyTierJni.runNetworkInstance(toml) == 0) { nativeError("EasyTier failed to start") }
+        mutableStatus.value = RuntimeStatus(RuntimeState.RUNNING, profile.id, profile.tunMode, null, null, null)
+        pollNoTun()
+        mutableStatus.value
+    } catch (error: Throwable) {
+        runCatching { EasyTierJni.retainNetworkInstance(null) }
+        failure(profile, error.message ?: nativeError("EasyTier failed to start"))
+    }
+
     private suspend fun stopLocked(): RuntimeStatus {
         // cancelAndJoin (instead of cancel) ensures the poll coroutine has fully
         // terminated before we call stopService(). Otherwise a late establishWhenResolved()
@@ -122,6 +149,13 @@ class EasyTierRuntimeCoordinator(private val context: Context, activity: Activit
         pollJob?.cancelAndJoin()
         pollJob = null
         val profile = activeProfile
+        if (noTunActive) {
+            mutableStatus.value = mutableStatus.value.copy(state = RuntimeState.STOPPING)
+            runCatching { EasyTierJni.retainNetworkInstance(null) }
+            noTunActive = false
+            activeProfile = null
+            return RuntimeStatus.Stopped.also { mutableStatus.value = it }
+        }
         when (profile?.tunMode) {
             TunMode.VPN_SERVICE -> {
                 mutableStatus.value = mutableStatus.value.copy(state = RuntimeState.STOPPING)
@@ -164,6 +198,29 @@ class EasyTierRuntimeCoordinator(private val context: Context, activity: Activit
     private fun pollRoot() {
         pollJob?.cancel()
         pollJob = scope.launch { root.status.collect { mutableStatus.value = it } }
+    }
+
+    private fun pollNoTun() {
+        pollJob?.cancel()
+        val profile = activeProfile ?: return
+        pollJob = scope.launch {
+            while (mutableStatus.value.state in setOf(RuntimeState.STARTING, RuntimeState.RUNNING)) {
+                runCatching { EasyTierJni.collectNetworkInfos(1)?.networkInfo(profile.id) }.getOrNull()?.let { info ->
+                    if (!info.error.isNullOrBlank()) {
+                        failure(profile, info.error)
+                        EasyTierJni.retainNetworkInstance(null)
+                        return@launch
+                    }
+                    // No TUN to establish: just surface runtime metadata for the UI.
+                    mutableStatus.value = mutableStatus.value.copy(
+                        peers = info.peers,
+                        hostname = info.hostname,
+                        natType = info.natType,
+                    )
+                }
+                delay(5_000)
+            }
+        }
     }
 
     private fun failure(profile: EasyTierProfile, error: String): RuntimeStatus =

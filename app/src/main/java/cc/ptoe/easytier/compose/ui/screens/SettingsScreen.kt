@@ -4,6 +4,7 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Router
@@ -29,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -73,40 +74,41 @@ internal fun SettingsScreen(
     LazyColumn(verticalArrangement = Arrangement.spacedBy(20.dp)) {
         item {
             SettingsGroup {
-                SettingsItem(
-                    icon = Icons.Default.AdminPanelSettings,
-                    title = "TUN Mode",
-                    subtitle = when {
-                        profile == null -> "No profile selected"
-                        tunMode == TunMode.VPN_SERVICE -> "VPN Service"
-                        else -> "Root TUN"
-                    },
-                    trailing = {
-                        Switch(
-                            checked = tunMode == TunMode.ROOT_TUN,
-                            onCheckedChange = { checked ->
-                                onTunMode(if (checked) TunMode.ROOT_TUN else TunMode.VPN_SERVICE)
-                            },
-                            enabled = profile != null && !active,
-                        )
-                    },
-                )
-            }
-        }
-
-        item {
-            SettingsGroup {
                 Column(Modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Global overrides", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    OutlinedTextField(
-                        value = tunDeviceName,
-                        onValueChange = { tunDeviceName = it },
-                        label = { Text("TUN device name (root only)") },
-                        singleLine = true,
-                        shape = MaterialTheme.shapes.medium,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    // TUN Mode switch — hidden when No TUN is enabled, since no_tun bypasses
+                    // transport setup entirely and the switch has no effect.
+                    AnimatedVisibility(visible = !settings.noTun) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("TUN Mode", style = MaterialTheme.typography.bodyLarge)
+                                Text(
+                                    if (tunMode == TunMode.ROOT_TUN) "Root TUN" else "VPN Service",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = tunMode == TunMode.ROOT_TUN,
+                                onCheckedChange = { checked ->
+                                    onTunMode(if (checked) TunMode.ROOT_TUN else TunMode.VPN_SERVICE)
+                                },
+                                enabled = profile != null && !active,
+                            )
+                        }
+                    }
+                    // TUN device name only applies to Root TUN mode (and only when TUN is not disabled).
+                    AnimatedVisibility(visible = !settings.noTun && tunMode == TunMode.ROOT_TUN) {
+                        OutlinedTextField(
+                            value = tunDeviceName,
+                            onValueChange = { tunDeviceName = it },
+                            label = { Text("TUN device name") },
+                            singleLine = true,
+                            shape = MaterialTheme.shapes.medium,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                     SwitchRow("No TUN", settings.noTun) { checked ->
                         onGlobalSettings(settings.copy(noTun = checked))
                     }

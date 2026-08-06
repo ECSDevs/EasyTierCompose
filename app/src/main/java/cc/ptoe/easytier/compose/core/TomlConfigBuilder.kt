@@ -120,7 +120,15 @@ object TomlConfigBuilder {
         // handle routing entirely. No Rust core changes or .so rebuild needed.
         if (profile.tunMode == TunMode.ROOT_TUN) {
             append("bind_device = false\n")
-            append("socket_mark = ${ROOT_TUN_SOCKET_MARK}\n")
+            // socket_mark bypasses Android's VpnService policy routing via fwmark.
+            // setsockopt(SO_MARK) requires CAP_NET_ADMIN, which only the root
+            // process has. In no_tun mode EasyTier runs in the app process
+            // (without root) and no TUN is established, so the fwmark is both
+            // unnecessary and impossible to apply — omit it or EasyTier fails
+            // with EPERM ("oserror operation not permitted").
+            if (!globalSettings.noTun) {
+                append("socket_mark = ${ROOT_TUN_SOCKET_MARK}\n")
+            }
         } else {
             append("bind_device = ${profile.bindDevice}\n")
         }
