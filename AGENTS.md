@@ -62,7 +62,10 @@ EasyTierCompose 是一个单 Activity 的 Jetpack Compose Android 应用，封�
 ### core 层
 - [EasyTierJni.kt](app/src/main/java/cc/ptoe/easytier/compose/core/EasyTierJni.kt) — 应用拥有的 JNI 门面（facade）。**应用代码统一使用此类，禁止直接调用 `com.easytier.jni.EasyTierJNI`。**
 - [EasyTierRuntimeCoordinator.kt](app/src/main/java/cc/ptoe/easytier/compose/core/EasyTierRuntimeCoordinator.kt) — 运行时编排器。`SupervisorJob + Dispatchers.IO` 协程域，`Mutex` 串行化 start/stop，持有 `VpnTunTransport` 与 `RootTunTransport`。`start(profile, globalSettings)` 先用 `withDeviceHostnameIfBlank` 从 Android 设备名补全 hostname，再经 `ProfileValidator` + `TomlConfigBuilder` 生成 TOML，按 `tunMode` 分派到 VPN / Root 实现；轮询 `collectNetworkInfos` 解析虚拟 IPv4、`proxy_cidrs` 远端路由、hostname、NAT 类型与 `peer_route_pairs` Peer 列表（VPN_SERVICE 直接在 app 进程轮询；ROOT_TUN 通过 AIDL 收集 `RootTunTransport.status` flow）。
-- [ProfileConfig.kt](app/src/main/java/cc/ptoe/easytier/compose/core/ProfileConfig.kt) — `ProfileValidator`（字段校验 + 生成 TOML 的原生 `parseConfig` 校验，接受 `GlobalSettings` 作为第二参数）、`TomlConfigBuilder`（结构化 profile + GlobalSettings → TOML，并提供 `rootTunSpec()` 生成 `RootTunSpec`）、`NativeConfigParser` / `EasyTierNativeConfigParser`。**已移除高级 TOML 透传路径**，所有配置均通过结构化表单生成。
+- [ProfileValidator.kt](app/src/main/java/cc/ptoe/easytier/compose/core/ProfileValidator.kt) — `ProfileValidator`：字段校验（IPv4/IPv6 CIDR、MTU、peers、proxy networks、port forwards、VPN portal、multiThreadCount、bps 限制、SOCKS5 端口等）+ 生成 TOML 的原生 `parseConfig` 校验，接受 `GlobalSettings` 作为第二参数。私有扩展函数（`isValidIpv4Cidr` / `isValidIpv6Cidr` / `isValidSocketAddr` / `isValidListenerUrl` 等）位于文件末尾。
+- [TomlConfigBuilder.kt](app/src/main/java/cc/ptoe/easytier/compose/core/TomlConfigBuilder.kt) — `TomlConfigBuilder`（object）：结构化 profile + GlobalSettings → TOML，并提供 `rootTunSpec()` 生成 `RootTunSpec`。ROOT_TUN 模式下输出 `bind_device = false` + `socket_mark = 0x20000`（`ROOT_TUN_SOCKET_MARK`）以绕过 VpnService/mihomo TUN。**已移除高级 TOML 透传路径**，所有配置均通过结构化表单生成。
+- [NativeConfigParser.kt](app/src/main/java/cc/ptoe/easytier/compose/core/NativeConfigParser.kt) — `NativeConfigParser`（fun interface）+ `EasyTierNativeConfigParser`（object 默认实现，调用 `EasyTierJni.parseConfig` / `getLastError`）。测试通过注入桩绕过真实 JNI。
+- [NetworkInfo.kt](app/src/main/java/cc/ptoe/easytier/compose/core/NetworkInfo.kt) — `collectNetworkInfos` 返回 JSON 的解析逻辑（从原 `EasyTierRuntimeCoordinator.kt` 抽出）：`NetworkInfo` data class、`String.networkInfo(profileId)` 顶层解析、`peerRoutePair()` 映射 `RuntimePeer`、`ipv4InetToCidr`（u32 big-endian → 点分十进制）、`natTypeName`（字符串/数字 0–9 统一）、`normalizeTunnelType`（取 scheme）、`normalizeCidr`（裸 IP 补 /32）、`EasyTierProfile.withDeviceHostnameIfBlank`（从 `Settings.Global.DEVICE_NAME` 补全 hostname）。
 
 ### data 层
 - [EasyTierModels.kt](app/src/main/java/cc/ptoe/easytier/compose/data/EasyTierModels.kt) — `EasyTierProfile`（`@Serializable`，含 ~50 个字段：基础、peers、listeners、proxy networks、port forwards、VPN portal、secure mode、STUN/whitelists、KCP/QUIC proxy flags、bps 限制等）、`GlobalSettings`（`tunDeviceName` / `noTun` / `socks5AllowLan` / `socks5Port`）、`TunMode` / `CompressionAlgo` / `EncryptionAlgorithm` 枚举、`Peer` / `ProxyNetwork` / `PortForward` / `VpnPortal` / `SecureMode` 子结构、`RuntimePeer`（含 `connectionType` / `tunnelProtos` / `lossRate` / `natType` / `cost`）、`RuntimeState`、`RuntimeStatus`（含 `hostname` / `natType` / `peers`）。
@@ -75,18 +78,31 @@ EasyTierCompose 是一个单 Activity 的 Jetpack Compose Android 应用，封�
   - [EasyTierVpnService.kt](app/src/main/java/cc/ptoe/easytier/compose/transport/vpn/EasyTierVpnService.kt) — `VpnService` 前台服务（`foregroundServiceType="specialUse"`），通过 `Builder()` 建立 tun，调用 `EasyTierJni.setTunFd`。
 - `transport/root/`：
   - [RootTunTransport.kt](app/src/main/java/cc/ptoe/easytier/compose/transport/root/RootTunTransport.kt) — 通过 libsu `RootService.bind` IPC 连接 root 进程，启动后持续轮询 `getStatus()` 并解析 `peersJson` 为 `List<RuntimePeer>`。
-  - [EasyTierRootService.kt](app/src/main/java/cc/ptoe/easytier/compose/transport/root/EasyTierRootService.kt) — `RootService`，在 root 进程内运行 EasyTier + 创建真实 `easytier0` 接口，轮询 DHCP；RUNNING 后持续轮询 `collectNetworkInfos` 更新 Peer 列表；Magic DNS 时通过 `settings put global dns1/dns2` 切换系统 DNS。
+  - [EasyTierRootService.kt](app/src/main/java/cc/ptoe/easytier/compose/transport/root/EasyTierRootService.kt) — `RootService`，在 root 进程内运行 EasyTier + 创建真实 `easytier0` 接口，轮询 DHCP；RUNNING 后持续轮询 `collectNetworkInfos` 更新 Peer 列表。聚焦 Service 生命周期 + Binder + EasyTier 启停，路由与 DNS 委托给下方两个 manager。通过 `RemoteCallbackList<IRootStatusCallback>` push 状态更新（替代轮询 `getStatus()`）。
+  - [RootTunRouteManager.kt](app/src/main/java/cc/ptoe/easytier/compose/transport/root/RootTunRouteManager.kt) — `internal` 类，管理 TUN 路由与 `ip rule`：`syncTunRoutes(cidr, runtimeRoutes, spec)` 计算路由集（虚拟 IP 子网 + 远端 `proxy_cidrs` + manual routes + Magic DNS 路由，移除本地 `spec.proxyCidrs`）并增量同步；`cleanupRoutesAndRules()` 幂等清理。ip rule 优先级 5000（先于 Android 的 10000+）。
+  - [SystemDnsManager.kt](app/src/main/java/cc/ptoe/easytier/compose/transport/root/SystemDnsManager.kt) — `internal` 类，Magic DNS 切换：`enableMagicDns(fakeIp)` 通过 `settings put global dns1/dns2` 切换系统 DNS 并保存原值；`restore()` 幂等恢复。常量 `MAGIC_DNS_FAKE_IP = "100.100.100.101"`。
   - [RootTunNative.kt](app/src/main/java/cc/ptoe/easytier/compose/transport/root/RootTunNative.kt) — 加载 `libroot_tun_jni`，提供 `create` / `syncRoutes` / `destroy`。
   - [RootModels.kt](app/src/main/java/cc/ptoe/easytier/compose/transport/root/RootModels.kt) — `RootTunSpec`、`RootRuntimeStatus`（`Parcelable`，AIDL 载荷）。
 
 ### AIDL
 位于 `app/src/main/aidl/cc/ptoe/easytier/compose/transport/root/`：
-- `IEasyTierRootService.aidl` — `start(profileId, toml, spec)`、`stop()`、`getStatus()`
+- `IEasyTierRootService.aidl` — `start(profileId, toml, spec)`、`stop()`、`getStatus()`、`registerStatusCallback(cb)` / `unregisterStatusCallback(cb)`（push-based 状态更新）
+- `IRootStatusCallback.aidl` — `onStatusUpdated(status)` 回调接口
 - `RootTunSpec.aidl`、`RootRuntimeStatus.aidl` — parcelable 声明
 
 ### ui 层
-- [EasyTierApp.kt](app/src/main/java/cc/ptoe/easytier/compose/ui/EasyTierApp.kt) — Compose 根。五个 `Destination`（Dashboard / Profiles / Peers / Settings / Editor），自适应布局：`screenWidthDp >= 840` 用 `NavigationRail`，否则用 `NavigationBar`（Editor 屏幕隐藏底部栏）。`DashboardScreen` 渲染 `StatusCard` + `StatusDetailsGroup`（网络名 / 虚拟 IP / hostname / NAT 类型 / 状态）；`PeersScreen` 列出 `RuntimePeer` 并通过 `PeerDetailsDialog` 展示延迟 / 隧道 / 丢包率等详情；`ProfileEditorScreen` 按分区组织全部配置（General / Network & Peers / Routing / IPv6 Public Address / Port Forwards / VPN Portal (WireGuard) / Secure Mode / STUN & Whitelists / Flags — General / Flags — P2P / Flags — KCP Proxy / Flags — QUIC Proxy）；`SettingsScreen` 含 TUN 模式切换、**Global overrides**（TUN 设备名 / `no_tun` / SOCKS5 allow LAN / SOCKS5 端口）、通知授权与 Reset。私有 Composable：`SectionCard`、`FormField`、`SwitchRow`、`ChoiceRow`（ExposedDropdownMenu）、`ListField` + `ListEditorDialog`、`PeerListField` + `PeerListEditorDialog`、`ProxyNetworkListField` + `ProxyNetworkEditorDialog`、`PortForwardListField` + `PortForwardEditorDialog`、`SettingsGroup` / `SettingsItem`。
+- [EasyTierApp.kt](app/src/main/java/cc/ptoe/easytier/compose/ui/EasyTierApp.kt) — Compose 根。五个 `Destination`（Dashboard / Profiles / Peers / Settings / Editor），自适应布局：`screenWidthDp >= 840` 用 `NavigationRail`，否则用 `NavigationBar`（Editor 屏幕隐藏底部栏）。Editor 屏幕支持 predictive back 手势（`PredictiveBackHandler` + `Animatable` 平移/缩放/淡出）。仅保留顶层导航逻辑，屏幕与组件已拆分到 `ui/screens/` 与 `ui/components/` 子包（所有内部 Composable 为 `internal` 可见性）。
 - [EasyTierViewModel.kt](app/src/main/java/cc/ptoe/easytier/compose/ui/EasyTierViewModel.kt) — `combine` 7 个 flow（profiles、selectedProfileId、本地 selectedId、draft、coordinator.status、errors、globalSettings）聚合为 `EasyTierUiState`，`WhileSubscribed(5_000)`。提供 `selectProfile` / `beginCreate` / `beginEdit` / `discardDraft` / `updateDraft` / `saveDraft` / `delete` / `updateTunMode` / `updateGlobalSettings` / `connect` / `disconnect` / `onVpnPermissionResult` / `resetProfiles`。
+- `ui/components/` — 跨屏幕复用的 `internal` Composable：
+  - [FormComponents.kt](app/src/main/java/cc/ptoe/easytier/compose/ui/components/FormComponents.kt) — `SectionCard`、`FormField`、`SwitchRow`、`ChoiceRow`（ExposedDropdownMenu）、`ListField` + `ListEditorDialog`（通用字符串列表编辑器）。
+  - [EditorListFields.kt](app/src/main/java/cc/ptoe/easytier/compose/ui/components/EditorListFields.kt) — `PeerListField` + `PeerListEditorDialog`、`ProxyNetworkListField` + `ProxyNetworkEditorDialog`、`PortForwardListField` + `PortForwardEditorDialog`（强类型列表字段 + 编辑对话框）。
+  - [SettingsComponents.kt](app/src/main/java/cc/ptoe/easytier/compose/ui/components/SettingsComponents.kt) — `SettingsGroup`、`SettingsItem`、`notificationsPermissionGranted(context)` 工具函数。
+- `ui/screens/` — 各 `Destination` 屏幕（`internal` Composable）：
+  - [DashboardScreen.kt](app/src/main/java/cc/ptoe/easytier/compose/ui/screens/DashboardScreen.kt) — `DashboardScreen` + `StatusCard` + `StatusDetailsGroup`（网络名 / 虚拟 IP / hostname / NAT 类型 / 状态）+ `ErrorBanner`。
+  - [ProfilesScreen.kt](app/src/main/java/cc/ptoe/easytier/compose/ui/screens/ProfilesScreen.kt) — profile 列表 + 删除确认对话框。
+  - [PeersScreen.kt](app/src/main/java/cc/ptoe/easytier/compose/ui/screens/PeersScreen.kt) — `PeersScreen` 列出 `RuntimePeer`，`PeerDetailsDialog` 展示延迟 / 隧道 / 丢包率等详情。
+  - [ProfileEditorScreen.kt](app/src/main/java/cc/ptoe/easytier/compose/ui/screens/ProfileEditorScreen.kt) — 按分区组织全部配置（General / Network & Peers / Routing / IPv6 Public Address / Port Forwards / VPN Portal (WireGuard) / Secure Mode / STUN & Whitelists / Flags — General / Flags — P2P / Flags — KCP Proxy / Flags — QUIC Proxy）。
+  - [SettingsScreen.kt](app/src/main/java/cc/ptoe/easytier/compose/ui/screens/SettingsScreen.kt) — TUN 模式切换、**Global overrides**（TUN 设备名 / `no_tun` / SOCKS5 allow LAN / SOCKS5 端口）、通知授权与 Reset。
 - `ui/theme/` — `EasyTierTheme`（亮/暗双色方案 + 自定义 `ExpressiveShapes`）、`Color.kt`、`Type.kt`。
 
 ### 原生符号所有者
@@ -115,12 +131,12 @@ EasyTierCompose 是一个单 Activity 的 Jetpack Compose Android 应用，封�
 - `[[port_forward]]` — `bind_addr` / `dst_addr` / `proto`（tcp/udp）。
 - `[vpn_portal_config]` — `client_cidr` / `wireguard_listen`（仅 `vpnPortal != null` 时输出）。
 - `[secure_mode]` — `enabled` / `local_private_key` / `local_public_key`（仅 `secureMode.enabled` 时输出）。
-- `[flags]` — `default_protocol`、`dev_name`（来自 `globalSettings.tunDeviceName`）、`enable_encryption`、`enable_ipv6`、`mtu`、`latency_first`、`enable_exit_node`、`no_tun`（来自 `globalSettings.noTun`）、`use_smoltcp=false`、`relay_network_whitelist`、`disable_p2p` / `p2p_only` / `lazy_p2p` / `relay_all_peer_rpc`、各 hole punching / UPnP 开关、`multi_thread` / `multi_thread_count`、`data_compress_algo`（枚举名：None/Zstd）、`bind_device`、KCP proxy 系列开关、`proxy_forward_by_system`、`accept_dns`（= `enableMagicDns`）、`private_mode`、QUIC proxy 系列开关、`foreign_relay_bps_limit` / `instance_recv_bps_limit`、`encryption_algorithm`（xor / aes-gcm / aes-256-gcm / chacha20）、`tld_dns_zone`、`disable_relay_data`、`enable_udp_broadcast_relay`。
+- `[flags]` — `default_protocol`、`dev_name`（来自 `globalSettings.tunDeviceName`）、`enable_encryption`、`enable_ipv6`、`mtu`、`latency_first`、`enable_exit_node`、`no_tun`（来自 `globalSettings.noTun`）、`use_smoltcp=false`、`relay_network_whitelist`、`disable_p2p` / `p2p_only` / `lazy_p2p` / `relay_all_peer_rpc`、各 hole punching / UPnP 开关、`multi_thread` / `multi_thread_count`、`data_compress_algo`（枚举名：None/Zstd）、`bind_device`（VPN_SERVICE = profile.bindDevice；ROOT_TUN 强制 false）、`socket_mark`（仅 ROOT_TUN，= `0x20000` / `ROOT_TUN_SOCKET_MARK`，使 Android 策略路由绕过 VpnService TUN 走物理接口）、KCP proxy 系列开关、`proxy_forward_by_system`、`accept_dns`（= `enableMagicDns`）、`private_mode`、QUIC proxy 系列开关、`foreign_relay_bps_limit` / `instance_recv_bps_limit`、`encryption_algorithm`（xor / aes-gcm / aes-256-gcm / chacha20）、`tld_dns_zone`、`disable_relay_data`、`enable_udp_broadcast_relay`。
 
 约束与说明：
 
 - MTU 默认 1380，有效区间 576..9000。
-- `accept_dns` 在开启 Magic DNS 时为 true（VPN_SERVICE 与 ROOT_TUN 均支持）。ROOT_TUN 模式下，`EasyTierRootService` 额外通过 root shell 执行 `settings put global dns1/dns2 100.100.100.101` 切换系统 DNS，并在停止时恢复原值。
+- `accept_dns` 在开启 Magic DNS 时为 true（VPN_SERVICE 与 ROOT_TUN 均支持）。ROOT_TUN 模式下，`SystemDnsManager`（由 `EasyTierRootService` 持有）额外通过 root shell 执行 `settings put global dns1/dns2 100.100.100.101` 切换系统 DNS，并在停止时恢复原值。
 - `TomlConfigBuilder.rootTunSpec(profile, globalSettings)` 生成 `RootTunSpec`（含 `ipv4Cidr` / `mtu` / `manualRoutes` / `proxyCidrs` / `devName` / `magicDns`），用于 AIDL 传递给 root 进程；`devName` 空白时回退到 `easytier0`。
 - 轮询 `collectNetworkInfos` 返回的 JSON 中：
   - `my_node_info.virtual_ipv4` 为 `{address:{addr:<u32 big-endian>}, network_length:<u32>}`，需按大端拆解为点分十进制（见 `ipv4InetToCidr`）。
@@ -146,7 +162,7 @@ EasyTierCompose 是一个单 Activity 的 Jetpack Compose Android 应用，封�
 ## 测试
 
 - 单元测试 [ProfileConfigTest.kt](app/src/test/java/cc/ptoe/easytier/compose/ProfileConfigTest.kt) 覆盖：结构化 TOML 生成（含 `[[port_forward]]` / `[vpn_portal_config]` / `[secure_mode]` / 全 flags 字段）、DHCP、Root TUN 支持 Magic DNS、`rootTunSpec`（含 dev name 覆盖与空白回退）、GlobalSettings 覆盖 TUN 设备名 / `no_tun` / SOCKS5（host 与端口）、字段校验（IPv4/IPv6 CIDR、MTU、peers、proxy networks、port forwards、VPN portal、multiThreadCount、bps 限制、SOCKS5 端口）。测试通过注入 `NativeConfigParser` 桩绕过真实 JNI。
-- 修改 `ProfileConfig.kt` 或 `EasyTierModels.kt` 后应运行 `./gradlew :app:testDebugUnitTest`。
+- 修改 `ProfileValidator.kt` / `TomlConfigBuilder.kt` / `NativeConfigParser.kt` / `NetworkInfo.kt` 或 `EasyTierModels.kt` 后应运行 `./gradlew :app:testDebugUnitTest`。
 - instrumented 测试（`ExampleInstrumentedTest`）为占位。
 
 ## 权限
