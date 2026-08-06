@@ -6,8 +6,12 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.activity.BackEventCompat
+import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -93,6 +97,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -118,6 +123,8 @@ import cc.ptoe.easytier.compose.data.SecureMode
 import cc.ptoe.easytier.compose.data.TunMode
 import cc.ptoe.easytier.compose.data.VpnPortal
 import cc.ptoe.easytier.compose.transport.RuntimeEffect
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.Flow
 
 private enum class Destination(val label: String, val icon: ImageVector) {
     Dashboard("Dashboard", Icons.Default.Dashboard),
@@ -148,10 +155,37 @@ fun EasyTierApp(
         if (state.draft == null && destination == Destination.Editor) destination = Destination.Profiles
     }
 
+    val backProgress = remember { Animatable(0f) }
+
+    // Reset gesture progress whenever we leave the Editor so the next entry starts at rest.
+    LaunchedEffect(destination) {
+        if (destination != Destination.Editor) backProgress.snapTo(0f)
+    }
+
+    PredictiveBackHandler(enabled = destination == Destination.Editor) { progress: Flow<BackEventCompat> ->
+        try {
+            progress.collect { event -> backProgress.snapTo(event.progress) }
+            // Gesture committed: discard draft and leave editor.
+            viewModel.discardDraft()
+            destination = Destination.Profiles
+        } catch (e: CancellationException) {
+            // Gesture cancelled: animate back to rest.
+            backProgress.animateTo(0f, animationSpec = tween(durationMillis = 250))
+        }
+    }
+
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(
+                modifier = Modifier.graphicsLayer {
+                    val p = backProgress.value
+                    translationX = p * size.width * 0.35f
+                    val scale = 1f - p * 0.1f
+                    scaleX = scale
+                    scaleY = scale
+                    alpha = 1f - p * 0.3f
+                },
                 title = { Text(destination.label) },
                 navigationIcon = {
                     if (destination == Destination.Editor) {
@@ -202,14 +236,37 @@ fun EasyTierApp(
                         delete = viewModel::delete,
                     )
                     Destination.Peers -> PeersScreen(state = state)
-                    Destination.Editor -> state.draft?.let { draft ->
-                        ProfileEditorScreen(
-                            profile = draft,
-                            errors = state.fieldErrors,
-                            running = draftRunning,
-                            update = viewModel::updateDraft,
-                            save = viewModel::saveDraft,
+                    Destination.Editor -> {
+                        // Underlying layer: Profile list (visible as back-target preview).
+                        ProfilesScreen(
+                            state = state,
+                            add = { viewModel.beginCreate(); destination = Destination.Editor },
+                            edit = { viewModel.beginEdit(it); destination = Destination.Editor },
+                            delete = viewModel::delete,
                         )
+                        // Top layer: Editor (participates in predictive back animation).
+                        state.draft?.let { draft ->
+                            Box(
+                                Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer {
+                                        val p = backProgress.value
+                                        translationX = p * size.width * 0.35f
+                                        val scale = 1f - p * 0.1f
+                                        scaleX = scale
+                                        scaleY = scale
+                                        alpha = 1f - p * 0.3f
+                                    }
+                            ) {
+                                ProfileEditorScreen(
+                                    profile = draft,
+                                    errors = state.fieldErrors,
+                                    running = draftRunning,
+                                    update = viewModel::updateDraft,
+                                    save = viewModel::saveDraft,
+                                )
+                            }
+                        }
                     }
                     Destination.Settings -> SettingsScreen(
                         state = state,
