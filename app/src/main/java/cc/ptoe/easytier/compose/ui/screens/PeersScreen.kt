@@ -29,7 +29,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import cc.ptoe.easytier.compose.R
 import cc.ptoe.easytier.compose.data.RuntimePeer
 import cc.ptoe.easytier.compose.data.RuntimeState
 import cc.ptoe.easytier.compose.ui.EasyTierUiState
@@ -55,7 +57,7 @@ internal fun PeersScreen(state: EasyTierUiState) {
                 )
                 Spacer(Modifier.size(12.dp))
                 Text(
-                    text = if (running) "No peers connected" else "Connect to a network to view peers",
+                    text = stringResource(if (running) R.string.peers_none_connected else R.string.peers_connect_to_view),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -84,18 +86,19 @@ internal fun PeersScreen(state: EasyTierUiState) {
                             )
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(
-                                    text = peer.hostname,
+                                    text = if (peer.hostname.equals("unknown", ignoreCase = true)) stringResource(R.string.value_unknown) else peer.hostname,
                                     style = MaterialTheme.typography.titleMedium,
                                     color = MaterialTheme.colorScheme.onSurface,
                                 )
                                 Text(
-                                    text = peer.virtualIpv4 ?: "—",
+                                    text = peer.virtualIpv4 ?: stringResource(R.string.value_unavailable),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                             Text(
-                                text = peer.latencyMs?.let { "%.0f ms".format(it) } ?: "—",
+                                text = peer.latencyMs?.let { stringResource(R.string.latency_ms, it) }
+                                    ?: stringResource(R.string.value_unavailable),
                                 style = MaterialTheme.typography.titleSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -116,21 +119,37 @@ private fun PeerDetailsDialog(peer: RuntimePeer, onDismiss: () -> Unit) {
         title = { Text(peer.hostname) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                PeerDetailRow("Virtual IP", peer.virtualIpv4)
+                PeerDetailRow(stringResource(R.string.detail_virtual_ip), peer.virtualIpv4)
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                PeerDetailRow("Latency", peer.latencyMs?.let { "%.1f ms".format(it) })
+                PeerDetailRow(
+                    stringResource(R.string.peer_detail_latency),
+                    peer.latencyMs?.let { stringResource(R.string.latency_ms_precise, it) },
+                )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                PeerDetailRow("Connection", peer.connectionType)
+                PeerDetailRow(stringResource(R.string.peer_detail_connection), peerConnectionLabel(peer))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                PeerDetailRow("Tunnel", peer.tunnelProtos.joinToString(", ").ifEmpty { "—" })
+                PeerDetailRow(
+                    stringResource(R.string.peer_detail_tunnel),
+                    peer.tunnelProtos.joinToString(", ").ifEmpty { null },
+                )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                PeerDetailRow("Loss rate", peer.lossRate?.let { "%.1f%%".format(it * 100.0) })
+                PeerDetailRow(
+                    stringResource(R.string.peer_detail_loss_rate),
+                    peer.lossRate?.let { stringResource(R.string.loss_rate, it * 100.0) },
+                )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                PeerDetailRow("NAT type", peer.natType)
+                PeerDetailRow(stringResource(R.string.detail_nat_type), localizedNatType(peer.natType))
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_close)) } },
     )
+}
+
+@Composable
+private fun peerConnectionLabel(peer: RuntimePeer): String = when {
+    peer.connectionType.equals("P2P", ignoreCase = true) -> stringResource(R.string.peer_connection_p2p)
+    peer.connectionType.startsWith("Relay", ignoreCase = true) -> stringResource(R.string.peer_connection_relay, peer.cost)
+    else -> peer.connectionType
 }
 
 @Composable
@@ -146,7 +165,7 @@ private fun PeerDetailRow(title: String, value: String?) {
             color = MaterialTheme.colorScheme.onSurface,
         )
         Text(
-            text = value?.ifEmpty { null } ?: "—",
+            text = value?.ifEmpty { null } ?: stringResource(R.string.value_unavailable),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

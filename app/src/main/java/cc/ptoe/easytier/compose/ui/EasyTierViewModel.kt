@@ -2,8 +2,10 @@ package cc.ptoe.easytier.compose.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import cc.ptoe.easytier.compose.R
 import cc.ptoe.easytier.compose.core.EasyTierRuntimeCoordinator
 import cc.ptoe.easytier.compose.core.ProfileValidator
+import cc.ptoe.easytier.compose.core.ValidationMessage
 import cc.ptoe.easytier.compose.data.EasyTierProfile
 import cc.ptoe.easytier.compose.data.GlobalSettings
 import cc.ptoe.easytier.compose.data.GlobalSettingsRepository
@@ -24,7 +26,7 @@ data class EasyTierUiState(
     val selectedProfileId: String? = null,
     val draft: EasyTierProfile? = null,
     val runtime: RuntimeStatus = RuntimeStatus.Stopped,
-    val fieldErrors: Map<String, String> = emptyMap(),
+    val fieldErrors: Map<String, ValidationMessage> = emptyMap(),
     val globalSettings: GlobalSettings = GlobalSettings(),
 )
 
@@ -35,7 +37,7 @@ class EasyTierViewModel(
 ) : ViewModel() {
     private val selectedId = MutableStateFlow<String?>(null)
     private val draft = MutableStateFlow<EasyTierProfile?>(null)
-    private val errors = MutableStateFlow<Map<String, String>>(emptyMap())
+    private val errors = MutableStateFlow<Map<String, ValidationMessage>>(emptyMap())
     private val globalSettings = MutableStateFlow(GlobalSettings())
 
     val state: StateFlow<EasyTierUiState> = combine(
@@ -53,7 +55,7 @@ class EasyTierViewModel(
         val localSelection = values[2] as String?
         val editing = values[3] as EasyTierProfile?
         val runtime = values[4] as RuntimeStatus
-        val fieldErrors = values[5] as Map<String, String>
+        val fieldErrors = values[5] as Map<String, ValidationMessage>
         val settings = values[6] as GlobalSettings
         EasyTierUiState(profiles, localSelection ?: persistedSelection ?: profiles.firstOrNull()?.id, editing, runtime, fieldErrors, settings)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), EasyTierUiState())
@@ -89,7 +91,7 @@ class EasyTierViewModel(
     fun saveDraft() = viewModelScope.launch {
         val value = draft.value ?: return@launch
         if (state.value.runtime.profileId == value.id && state.value.runtime.state in setOf(RuntimeState.STARTING, RuntimeState.RUNNING)) {
-            errors.value = mapOf("form" to "Disconnect before saving this profile")
+            errors.value = mapOf("form" to ValidationMessage.Resource(R.string.error_disconnect_before_save))
             return@launch
         }
         val validation = ProfileValidator().validate(value, globalSettings.value)

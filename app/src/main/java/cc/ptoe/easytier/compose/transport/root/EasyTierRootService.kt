@@ -1,10 +1,12 @@
 package cc.ptoe.easytier.compose.transport.root
+import androidx.annotation.StringRes
 
 import android.content.Intent
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.os.RemoteCallbackList
 import android.util.Log
+import cc.ptoe.easytier.compose.R
 import cc.ptoe.easytier.compose.core.EasyTierJni
 import cc.ptoe.easytier.compose.core.WireGuardPortalClient
 import cc.ptoe.easytier.compose.core.networkInfo
@@ -100,7 +102,7 @@ class EasyTierRootService : RootService() {
         active = true
         updateStatus(RootRuntimeStatus(RuntimeState.STARTING.name, profileId, null, null, null, null))
         runCatching {
-            require(EasyTierJni.parseConfig(toml) == 0) { nativeError("EasyTier rejected configuration") }
+            require(EasyTierJni.parseConfig(toml) == 0) { nativeError(R.string.error_native_rejected) }
             cleanupResources()
             updateStatus(RootRuntimeStatus(RuntimeState.STARTING.name, profileId, null, null, null, null))
             if (spec.noTun) {
@@ -115,7 +117,7 @@ class EasyTierRootService : RootService() {
             //    SO_BINDTODEVICEs to physical interfaces (wlan0/eth0/rmnet*),
             //    bypassing VpnService and other TUNs without any netns or
             //    fwmark hacks.
-            require(EasyTierJni.runNetworkInstance(toml) == 0) { nativeError("EasyTier failed to start") }
+            require(EasyTierJni.runNetworkInstance(toml) == 0) { nativeError(R.string.error_easytier_start_failed) }
             if (spec.magicDns) dnsManager.enableMagicDns(SystemDnsManager.MAGIC_DNS_FAKE_IP)
             if (!spec.ipv4Cidr.isNullOrBlank()) {
                 Log.i(TAG, "startRoot: using static IPv4 ${spec.ipv4Cidr}")
@@ -126,7 +128,7 @@ class EasyTierRootService : RootService() {
             }
         }.onFailure {
             Log.e(TAG, "startRoot failed", it)
-            failRoot(it.message ?: nativeError("Root EasyTier start failed"))
+            failRoot(it.message ?: nativeError(R.string.error_root_easytier_start_failed))
         }
     }
 
@@ -139,7 +141,7 @@ class EasyTierRootService : RootService() {
      */
     private suspend fun startNoTun(profileId: String, toml: String, spec: RootTunSpec) {
         Log.i(TAG, "startNoTun: profileId=$profileId")
-        require(EasyTierJni.runNetworkInstance(toml) == 0) { nativeError("EasyTier failed to start") }
+        require(EasyTierJni.runNetworkInstance(toml) == 0) { nativeError(R.string.error_easytier_start_failed) }
         updateStatus(RootRuntimeStatus(RuntimeState.RUNNING.name, profileId, null, null, null, null))
         statusJob = scope.launch { pollNoTunStatus(profileId, spec) }
     }
@@ -182,7 +184,7 @@ class EasyTierRootService : RootService() {
                 Log.e(TAG, "pollNoTunStatus failed", it)
             }
             if (shouldFail) {
-                failRoot(failMessage ?: "Root EasyTier error")
+                failRoot(failMessage ?: getString(R.string.error_root_easytier_error))
                 return
             }
             delay(5_000)
@@ -217,7 +219,7 @@ class EasyTierRootService : RootService() {
                 }
             }.onFailure {
                 Log.e(TAG, "pollDhcp failed", it)
-                failRoot(it.message ?: nativeError("Root DHCP polling failed"))
+                failRoot(it.message ?: nativeError(R.string.error_root_dhcp_polling_failed))
             }
             delay(2_000)
         }
@@ -229,7 +231,7 @@ class EasyTierRootService : RootService() {
         if (spec.ipv4Cidr.isNullOrBlank()) {
             execRoot("ip addr add $cidr dev $devName")
         }
-        require(EasyTierJni.setTunFd(profileId, tunFd) == 0) { nativeError("EasyTier failed to attach root TUN") }
+        require(EasyTierJni.setTunFd(profileId, tunFd) == 0) { nativeError(R.string.error_root_tun_attach_failed) }
         routeManager?.syncTunRoutes(cidr, runtimeRoutes, spec)
         updateStatus(RootRuntimeStatus(RuntimeState.RUNNING.name, profileId, cidr, devName, null, null))
         Log.i(TAG, "attachTun: running, virtualIpv4=$cidr dev=$devName")
@@ -279,7 +281,7 @@ class EasyTierRootService : RootService() {
                 Log.e(TAG, "pollStatus failed", it)
             }
             if (shouldFail) {
-                failRoot(failMessage ?: "Root EasyTier error")
+                failRoot(failMessage ?: getString(R.string.error_root_easytier_error))
                 return
             }
             delay(5_000)
@@ -339,5 +341,5 @@ class EasyTierRootService : RootService() {
         output
     }.getOrNull()
 
-    private fun nativeError(fallback: String) = EasyTierJni.getLastError() ?: fallback
+    private fun nativeError(@StringRes fallbackRes: Int) = EasyTierJni.getLastError() ?: getString(fallbackRes)
 }

@@ -1,25 +1,39 @@
 package cc.ptoe.easytier.compose.core
 
+import android.content.Context
+import androidx.annotation.StringRes
+import cc.ptoe.easytier.compose.R
 import cc.ptoe.easytier.compose.data.EasyTierProfile
 import cc.ptoe.easytier.compose.data.GlobalSettings
 import java.net.InetAddress
+
+sealed interface ValidationMessage {
+    data class Resource(@StringRes val id: Int) : ValidationMessage
+
+    data class Raw(val value: String) : ValidationMessage
+}
+
+fun ValidationMessage.resolve(context: Context): String = when (this) {
+    is ValidationMessage.Resource -> context.getString(id)
+    is ValidationMessage.Raw -> value
+}
 
 class ProfileValidator(private val nativeParser: NativeConfigParser = EasyTierNativeConfigParser) {
     fun validate(
         profile: EasyTierProfile,
         globalSettings: GlobalSettings = GlobalSettings(),
-    ): Map<String, String> = buildMap {
-        if (profile.name.isBlank()) put("name", "Profile name is required")
-        if (profile.networkName.isBlank()) put("networkName", "Network name is required")
-        if (profile.tldDnsZone.isBlank()) put("tldDnsZone", "TLD DNS zone is required")
+    ): Map<String, ValidationMessage> = buildMap {
+        if (profile.name.isBlank()) put("name", ValidationMessage.Resource(R.string.error_profile_name_required))
+        if (profile.networkName.isBlank()) put("networkName", ValidationMessage.Resource(R.string.error_network_name_required))
+        if (profile.tldDnsZone.isBlank()) put("tldDnsZone", ValidationMessage.Resource(R.string.error_tld_dns_zone_required))
         if (!profile.dhcp && !profile.virtualIpv4.isValidIpv4Cidr()) {
-            put("virtualIpv4", "A valid IPv4 CIDR is required when DHCP is off")
+            put("virtualIpv4", ValidationMessage.Resource(R.string.error_ipv4_cidr_required_dhcp_off))
         }
         profile.virtualIpv6?.takeIf { it.isNotBlank() }?.let {
-            if (!it.isValidIpv6Cidr()) put("virtualIpv6", "Invalid IPv6 CIDR")
+            if (!it.isValidIpv6Cidr()) put("virtualIpv6", ValidationMessage.Resource(R.string.error_invalid_ipv6_cidr))
         }
         profile.ipv6PublicAddrPrefix?.takeIf { it.isNotBlank() }?.let {
-            if (!it.isValidIpv6Cidr()) put("ipv6PublicAddrPrefix", "Invalid IPv6 CIDR")
+            if (!it.isValidIpv6Cidr()) put("ipv6PublicAddrPrefix", ValidationMessage.Resource(R.string.error_invalid_ipv6_cidr))
         }
         validateStringList("listeners", profile.listeners) { it.isValidListenerUrl() }
         validateStringList("mappedListeners", profile.mappedListeners) { it.isValidListenerUrl() }
@@ -34,84 +48,84 @@ class ProfileValidator(private val nativeParser: NativeConfigParser = EasyTierNa
         validatePortForwards(profile)
         profile.vpnPortal?.let { portal ->
             when {
-                !portal.clientCidr.isValidIpv4Cidr() -> put("vpnPortal", "Invalid client CIDR")
+                !portal.clientCidr.isValidIpv4Cidr() -> put("vpnPortal", ValidationMessage.Resource(R.string.error_invalid_client_cidr))
                 !portal.clientCidr.isRoutablePortalCidr() -> put(
                     "vpnPortal",
-                    "Client CIDR must be a routable subnet (no loopback/link-local/multicast, prefix 8-28)",
+                    ValidationMessage.Resource(R.string.error_portal_cidr_not_routable),
                 )
             }
-            if (!portal.wireguardListen.isValidSocketAddr()) put("vpnPortal", "Invalid WireGuard listen address")
+            if (!portal.wireguardListen.isValidSocketAddr()) put("vpnPortal", ValidationMessage.Resource(R.string.error_invalid_wireguard_listen))
         }
         if (globalSettings.mtu !in 576..9000) {
-            put("globalMtu", "MTU must be between 576 and 9000")
+            put("globalMtu", ValidationMessage.Resource(R.string.error_mtu_range))
         }
         if (globalSettings.multiThreadCount <= 0) {
-            put("globalMultiThreadCount", "Thread count must be greater than 0")
+            put("globalMultiThreadCount", ValidationMessage.Resource(R.string.error_thread_count_positive))
         }
         if (globalSettings.foreignRelayBpsLimit < 0) {
-            put("globalForeignRelayBpsLimit", "Cannot be negative")
+            put("globalForeignRelayBpsLimit", ValidationMessage.Resource(R.string.error_non_negative))
         }
         if (globalSettings.instanceRecvBpsLimit < 0) {
-            put("globalInstanceRecvBpsLimit", "Cannot be negative")
+            put("globalInstanceRecvBpsLimit", ValidationMessage.Resource(R.string.error_non_negative))
         }
         // Final native validation of the generated TOML.
         val toml = TomlConfigBuilder.build(profile, globalSettings)
         nativeParser.parse(toml)?.let { put("form", it) }
     }
 
-    private fun MutableMap<String, String>.validateStringList(
+    private fun MutableMap<String, ValidationMessage>.validateStringList(
         field: String,
         values: List<String>,
         itemCheck: ((String) -> Boolean)? = null,
     ) {
         if (values.any { it.isBlank() }) {
-            put(field, "Entries cannot be blank")
+            put(field, ValidationMessage.Resource(R.string.error_entries_not_blank))
         } else if (itemCheck != null && values.any { !itemCheck(it.trim()) }) {
-            put(field, "One or more entries are invalid")
+            put(field, ValidationMessage.Resource(R.string.error_entries_invalid))
         }
     }
 
-    private fun MutableMap<String, String>.validatePeers(profile: EasyTierProfile) {
+    private fun MutableMap<String, ValidationMessage>.validatePeers(profile: EasyTierProfile) {
         val blanks = profile.peers.count { it.uri.isBlank() }
         if (blanks > 0) {
-            put("peers", "Peer URIs cannot be blank")
+            put("peers", ValidationMessage.Resource(R.string.error_peer_uris_not_blank))
         } else if (profile.peers.any { !it.uri.trim().isValidListenerUrl() }) {
-            put("peers", "One or more peer URIs are invalid")
+            put("peers", ValidationMessage.Resource(R.string.error_peer_uris_invalid))
         }
     }
 
-    private fun MutableMap<String, String>.validateProxyNetworks(profile: EasyTierProfile) {
+    private fun MutableMap<String, ValidationMessage>.validateProxyNetworks(profile: EasyTierProfile) {
         val blanks = profile.proxyNetworks.count { it.cidr.isBlank() }
         if (blanks > 0) {
-            put("proxyNetworks", "Proxy CIDRs cannot be blank")
+            put("proxyNetworks", ValidationMessage.Resource(R.string.error_proxy_cidrs_not_blank))
             return
         }
         if (profile.proxyNetworks.any { !it.cidr.trim().isValidIpv4Cidr() }) {
-            put("proxyNetworks", "One or more proxy CIDRs are invalid")
+            put("proxyNetworks", ValidationMessage.Resource(R.string.error_proxy_cidrs_invalid))
             return
         }
         if (profile.proxyNetworks.any { it.mappedCidr != null && it.mappedCidr.isNotBlank() && !it.mappedCidr.trim().isValidIpv4Cidr() }) {
-            put("proxyNetworks", "One or more mapped CIDRs are invalid")
+            put("proxyNetworks", ValidationMessage.Resource(R.string.error_mapped_cidrs_invalid))
             return
         }
         val allowedProtos = setOf("tcp", "udp", "icmp")
         if (profile.proxyNetworks.any { net -> net.allow.any { it.trim().lowercase() !in allowedProtos } }) {
-            put("proxyNetworks", "Allow entries must be tcp, udp, or icmp")
+            put("proxyNetworks", ValidationMessage.Resource(R.string.error_proxy_allow_protocols))
         }
     }
 
-    private fun MutableMap<String, String>.validatePortForwards(profile: EasyTierProfile) {
+    private fun MutableMap<String, ValidationMessage>.validatePortForwards(profile: EasyTierProfile) {
         val blanks = profile.portForwards.count { it.bindAddr.isBlank() || it.dstAddr.isBlank() || it.proto.isBlank() }
         if (blanks > 0) {
-            put("portForwards", "Bind, destination, and protocol are required")
+            put("portForwards", ValidationMessage.Resource(R.string.error_port_forward_fields_required))
             return
         }
         if (profile.portForwards.any { !it.bindAddr.trim().isValidSocketAddr() || !it.dstAddr.trim().isValidSocketAddr() }) {
-            put("portForwards", "One or more port-forward addresses are invalid")
+            put("portForwards", ValidationMessage.Resource(R.string.error_port_forward_addresses_invalid))
             return
         }
         if (profile.portForwards.any { it.proto.trim().lowercase() !in setOf("tcp", "udp") }) {
-            put("portForwards", "Protocol must be tcp or udp")
+            put("portForwards", ValidationMessage.Resource(R.string.error_port_forward_protocol))
         }
     }
 }

@@ -30,7 +30,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import cc.ptoe.easytier.compose.R
 import cc.ptoe.easytier.compose.data.Peer
 import cc.ptoe.easytier.compose.data.PortForward
 import cc.ptoe.easytier.compose.data.ProxyNetwork
@@ -38,20 +41,26 @@ import cc.ptoe.easytier.compose.data.ProxyNetwork
 @Composable
 internal fun PeerListField(peers: List<Peer>, error: String?, onChange: (List<Peer>) -> Unit) {
     var open by remember { mutableStateOf(false) }
+    val label = stringResource(R.string.list_peers)
     val fieldValue = when {
         peers.isEmpty() -> ""
         peers.size == 1 -> peers.first().uri
-        else -> "${peers.size} peers"
+        else -> pluralStringResource(R.plurals.peer_list_count, peers.size, peers.size)
     }
     Box(Modifier.fillMaxWidth()) {
         OutlinedTextField(
             value = fieldValue,
             onValueChange = {},
             readOnly = true,
-            label = { Text("Peers") },
+            label = { Text(label) },
             supportingText = if (error == null) null else { { Text(error) } },
             isError = error != null,
-            trailingIcon = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Edit peers") },
+            trailingIcon = {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = stringResource(R.string.content_edit_field, label),
+                )
+            },
             shape = MaterialTheme.shapes.medium,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -67,45 +76,76 @@ internal fun PeerListEditorDialog(peers: List<Peer>, onDismiss: () -> Unit, onCh
     var uri by remember { mutableStateOf("") }
     var publicKey by remember { mutableStateOf("") }
 
-    fun reset() { editingIndex = null; uri = ""; publicKey = "" }
+    fun reset() {
+        editingIndex = null
+        uri = ""
+        publicKey = ""
+    }
+
     fun commit() {
         val trimmedUri = uri.trim()
-        if (trimmedUri.isEmpty()) { reset(); return }
+        if (trimmedUri.isEmpty()) {
+            reset()
+            return
+        }
         val peer = Peer(uri = trimmedUri, peerPublicKey = publicKey.trim().ifBlank { null })
         draft = when (editingIndex) {
             null -> draft + peer
-            else -> draft.mapIndexed { i, p -> if (i == editingIndex) peer else p }
+            else -> draft.mapIndexed { i, existing -> if (i == editingIndex) peer else existing }
         }
         reset()
     }
 
     AlertDialog(
         onDismissRequest = { if (draft != peers) onChange(draft); onDismiss() },
-        title = { Text("Peers") },
+        title = { Text(stringResource(R.string.list_peers)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(if (editingIndex != null) "Edit peer" else "Add peer", style = MaterialTheme.typography.labelLarge)
-                OutlinedTextField(
-                    value = uri, onValueChange = { uri = it },
-                    label = { Text("Peer URI") }, singleLine = true,
-                    shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth(),
+                Text(
+                    stringResource(if (editingIndex != null) R.string.list_edit_peer else R.string.list_add_peer),
+                    style = MaterialTheme.typography.labelLarge,
                 )
                 OutlinedTextField(
-                    value = publicKey, onValueChange = { publicKey = it },
-                    label = { Text("Peer public key (optional)") }, singleLine = true,
-                    shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth(),
+                    value = uri,
+                    onValueChange = { uri = it },
+                    label = { Text(stringResource(R.string.list_peer_uri)) },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
                 )
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                    if (editingIndex != null) TextButton(onClick = { reset() }) { Text("Cancel") }
-                    Button(onClick = { commit() }, enabled = uri.trim().isNotEmpty(), shape = MaterialTheme.shapes.medium) {
+                OutlinedTextField(
+                    value = publicKey,
+                    onValueChange = { publicKey = it },
+                    label = { Text(stringResource(R.string.list_peer_public_key_optional)) },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (editingIndex != null) {
+                        TextButton(onClick = { reset() }) { Text(stringResource(R.string.action_cancel)) }
+                    }
+                    Button(
+                        onClick = { commit() },
+                        enabled = uri.trim().isNotEmpty(),
+                        shape = MaterialTheme.shapes.medium,
+                    ) {
                         Icon(if (editingIndex == null) Icons.Default.Add else Icons.Default.Check, null, Modifier.size(18.dp))
                         Spacer(Modifier.size(8.dp))
-                        Text(if (editingIndex == null) "Add" else "Update")
+                        Text(stringResource(if (editingIndex == null) R.string.action_add else R.string.action_update))
                     }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 if (draft.isEmpty()) {
-                    Text("No peers yet.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        stringResource(R.string.list_no_peers),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         draft.forEachIndexed { index, peer ->
@@ -113,14 +153,22 @@ internal fun PeerListEditorDialog(peers: List<Peer>, onDismiss: () -> Unit, onCh
                                 Column(Modifier.weight(1f)) {
                                     Text(peer.uri, style = MaterialTheme.typography.bodyMedium)
                                     peer.peerPublicKey?.takeIf { it.isNotBlank() }?.let {
-                                        Text("key: $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(
+                                            stringResource(R.string.list_peer_key, it),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
                                     }
                                 }
-                                IconButton(onClick = { editingIndex = index; uri = peer.uri; publicKey = peer.peerPublicKey.orEmpty() }) {
-                                    Icon(Icons.Default.Edit, contentDescription = "Edit peer")
+                                IconButton(onClick = {
+                                    editingIndex = index
+                                    uri = peer.uri
+                                    publicKey = peer.peerPublicKey.orEmpty()
+                                }) {
+                                    Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.content_edit_peer))
                                 }
                                 IconButton(onClick = { draft = draft.filterIndexed { i, _ -> i != index } }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete peer")
+                                    Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.content_delete_peer))
                                 }
                             }
                         }
@@ -128,28 +176,39 @@ internal fun PeerListEditorDialog(peers: List<Peer>, onDismiss: () -> Unit, onCh
                 }
             }
         },
-        confirmButton = { Button(onClick = { if (draft != peers) onChange(draft); onDismiss() }, shape = MaterialTheme.shapes.medium) { Text("Done") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        confirmButton = {
+            Button(
+                onClick = { if (draft != peers) onChange(draft); onDismiss() },
+                shape = MaterialTheme.shapes.medium,
+            ) { Text(stringResource(R.string.action_done)) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } },
     )
 }
 
 @Composable
 internal fun ProxyNetworkListField(networks: List<ProxyNetwork>, error: String?, onChange: (List<ProxyNetwork>) -> Unit) {
     var open by remember { mutableStateOf(false) }
+    val label = stringResource(R.string.list_proxy_networks)
     val fieldValue = when {
         networks.isEmpty() -> ""
         networks.size == 1 -> networks.first().cidr
-        else -> "${networks.size} networks"
+        else -> pluralStringResource(R.plurals.proxy_network_count, networks.size, networks.size)
     }
     Box(Modifier.fillMaxWidth()) {
         OutlinedTextField(
             value = fieldValue,
             onValueChange = {},
             readOnly = true,
-            label = { Text("Proxy networks") },
+            label = { Text(label) },
             supportingText = if (error == null) null else { { Text(error) } },
             isError = error != null,
-            trailingIcon = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Edit proxy networks") },
+            trailingIcon = {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = stringResource(R.string.content_edit_field, label),
+                )
+            },
             shape = MaterialTheme.shapes.medium,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -166,10 +225,19 @@ internal fun ProxyNetworkEditorDialog(networks: List<ProxyNetwork>, onDismiss: (
     var mappedCidr by remember { mutableStateOf("") }
     var allow by remember { mutableStateOf("") }
 
-    fun reset() { editingIndex = null; cidr = ""; mappedCidr = ""; allow = "" }
+    fun reset() {
+        editingIndex = null
+        cidr = ""
+        mappedCidr = ""
+        allow = ""
+    }
+
     fun commit() {
         val trimmedCidr = cidr.trim()
-        if (trimmedCidr.isEmpty()) { reset(); return }
+        if (trimmedCidr.isEmpty()) {
+            reset()
+            return
+        }
         val network = ProxyNetwork(
             cidr = trimmedCidr,
             mappedCidr = mappedCidr.trim().ifBlank { null },
@@ -177,31 +245,69 @@ internal fun ProxyNetworkEditorDialog(networks: List<ProxyNetwork>, onDismiss: (
         )
         draft = when (editingIndex) {
             null -> draft + network
-            else -> draft.mapIndexed { i, n -> if (i == editingIndex) network else n }
+            else -> draft.mapIndexed { i, existing -> if (i == editingIndex) network else existing }
         }
         reset()
     }
 
     AlertDialog(
         onDismissRequest = { if (draft != networks) onChange(draft); onDismiss() },
-        title = { Text("Proxy networks") },
+        title = { Text(stringResource(R.string.list_proxy_networks)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(if (editingIndex != null) "Edit network" else "Add network", style = MaterialTheme.typography.labelLarge)
-                OutlinedTextField(value = cidr, onValueChange = { cidr = it }, label = { Text("CIDR") }, singleLine = true, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = mappedCidr, onValueChange = { mappedCidr = it }, label = { Text("Mapped CIDR (optional)") }, singleLine = true, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = allow, onValueChange = { allow = it }, label = { Text("Allow (tcp,udp,icmp — comma separated)") }, singleLine = true, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth())
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                    if (editingIndex != null) TextButton(onClick = { reset() }) { Text("Cancel") }
-                    Button(onClick = { commit() }, enabled = cidr.trim().isNotEmpty(), shape = MaterialTheme.shapes.medium) {
+                Text(
+                    stringResource(if (editingIndex != null) R.string.list_edit_network else R.string.list_add_network),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                OutlinedTextField(
+                    value = cidr,
+                    onValueChange = { cidr = it },
+                    label = { Text(stringResource(R.string.list_cidr)) },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = mappedCidr,
+                    onValueChange = { mappedCidr = it },
+                    label = { Text(stringResource(R.string.list_mapped_cidr_optional)) },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = allow,
+                    onValueChange = { allow = it },
+                    label = { Text(stringResource(R.string.list_allow_protocols)) },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (editingIndex != null) {
+                        TextButton(onClick = { reset() }) { Text(stringResource(R.string.action_cancel)) }
+                    }
+                    Button(
+                        onClick = { commit() },
+                        enabled = cidr.trim().isNotEmpty(),
+                        shape = MaterialTheme.shapes.medium,
+                    ) {
                         Icon(if (editingIndex == null) Icons.Default.Add else Icons.Default.Check, null, Modifier.size(18.dp))
                         Spacer(Modifier.size(8.dp))
-                        Text(if (editingIndex == null) "Add" else "Update")
+                        Text(stringResource(if (editingIndex == null) R.string.action_add else R.string.action_update))
                     }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 if (draft.isEmpty()) {
-                    Text("No proxy networks yet.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        stringResource(R.string.list_no_proxy_networks),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         draft.forEachIndexed { index, network ->
@@ -209,16 +315,31 @@ internal fun ProxyNetworkEditorDialog(networks: List<ProxyNetwork>, onDismiss: (
                                 Column(Modifier.weight(1f)) {
                                     Text(network.cidr, style = MaterialTheme.typography.bodyMedium)
                                     val extra = listOfNotNull(
-                                        network.mappedCidr?.takeIf { it.isNotBlank() }?.let { "mapped: $it" },
-                                        network.allow.takeIf { it.isNotEmpty() }?.joinToString(",")?.let { "allow: $it" },
+                                        network.mappedCidr?.takeIf { it.isNotBlank() }?.let {
+                                            stringResource(R.string.list_mapped_summary, it)
+                                        },
+                                        network.allow.takeIf { it.isNotEmpty() }?.joinToString(",")?.let {
+                                            stringResource(R.string.list_allow_summary, it)
+                                        },
                                     ).joinToString(" • ")
-                                    if (extra.isNotEmpty()) Text(extra, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    if (extra.isNotEmpty()) {
+                                        Text(
+                                            extra,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
                                 }
-                                IconButton(onClick = { editingIndex = index; cidr = network.cidr; mappedCidr = network.mappedCidr.orEmpty(); allow = network.allow.joinToString(",") }) {
-                                    Icon(Icons.Default.Edit, contentDescription = "Edit network")
+                                IconButton(onClick = {
+                                    editingIndex = index
+                                    cidr = network.cidr
+                                    mappedCidr = network.mappedCidr.orEmpty()
+                                    allow = network.allow.joinToString(",")
+                                }) {
+                                    Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.content_edit_network))
                                 }
                                 IconButton(onClick = { draft = draft.filterIndexed { i, _ -> i != index } }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete network")
+                                    Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.content_delete_network))
                                 }
                             }
                         }
@@ -226,28 +347,39 @@ internal fun ProxyNetworkEditorDialog(networks: List<ProxyNetwork>, onDismiss: (
                 }
             }
         },
-        confirmButton = { Button(onClick = { if (draft != networks) onChange(draft); onDismiss() }, shape = MaterialTheme.shapes.medium) { Text("Done") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        confirmButton = {
+            Button(
+                onClick = { if (draft != networks) onChange(draft); onDismiss() },
+                shape = MaterialTheme.shapes.medium,
+            ) { Text(stringResource(R.string.action_done)) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } },
     )
 }
 
 @Composable
 internal fun PortForwardListField(forwards: List<PortForward>, error: String?, onChange: (List<PortForward>) -> Unit) {
     var open by remember { mutableStateOf(false) }
+    val label = stringResource(R.string.list_port_forwards)
     val fieldValue = when {
         forwards.isEmpty() -> ""
         forwards.size == 1 -> forwards.first().bindAddr
-        else -> "${forwards.size} forwards"
+        else -> pluralStringResource(R.plurals.port_forward_count, forwards.size, forwards.size)
     }
     Box(Modifier.fillMaxWidth()) {
         OutlinedTextField(
             value = fieldValue,
             onValueChange = {},
             readOnly = true,
-            label = { Text("Port forwards") },
+            label = { Text(label) },
             supportingText = if (error == null) null else { { Text(error) } },
             isError = error != null,
-            trailingIcon = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Edit port forwards") },
+            trailingIcon = {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = stringResource(R.string.content_edit_field, label),
+                )
+            },
             shape = MaterialTheme.shapes.medium,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -264,47 +396,103 @@ internal fun PortForwardEditorDialog(forwards: List<PortForward>, onDismiss: () 
     var dstAddr by remember { mutableStateOf("") }
     var proto by remember { mutableStateOf("tcp") }
 
-    fun reset() { editingIndex = null; bindAddr = ""; dstAddr = ""; proto = "tcp" }
+    fun reset() {
+        editingIndex = null
+        bindAddr = ""
+        dstAddr = ""
+        proto = "tcp"
+    }
+
     fun commit() {
-        if (bindAddr.isBlank() || dstAddr.isBlank()) { reset(); return }
+        if (bindAddr.isBlank() || dstAddr.isBlank()) {
+            reset()
+            return
+        }
         val forward = PortForward(bindAddr = bindAddr.trim(), dstAddr = dstAddr.trim(), proto = proto.trim().lowercase())
         draft = when (editingIndex) {
             null -> draft + forward
-            else -> draft.mapIndexed { i, f -> if (i == editingIndex) forward else f }
+            else -> draft.mapIndexed { i, existing -> if (i == editingIndex) forward else existing }
         }
         reset()
     }
 
     AlertDialog(
         onDismissRequest = { if (draft != forwards) onChange(draft); onDismiss() },
-        title = { Text("Port forwards") },
+        title = { Text(stringResource(R.string.list_port_forwards)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(if (editingIndex != null) "Edit forward" else "Add forward", style = MaterialTheme.typography.labelLarge)
-                OutlinedTextField(value = bindAddr, onValueChange = { bindAddr = it }, label = { Text("Bind address (host:port)") }, singleLine = true, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = dstAddr, onValueChange = { dstAddr = it }, label = { Text("Destination address (host:port)") }, singleLine = true, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth())
-                ChoiceRow("Protocol", proto, listOf("tcp", "udp")) { proto = it }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                    if (editingIndex != null) TextButton(onClick = { reset() }) { Text("Cancel") }
-                    Button(onClick = { commit() }, enabled = bindAddr.isNotBlank() && dstAddr.isNotBlank(), shape = MaterialTheme.shapes.medium) {
+                Text(
+                    stringResource(if (editingIndex != null) R.string.list_edit_forward else R.string.list_add_forward),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                OutlinedTextField(
+                    value = bindAddr,
+                    onValueChange = { bindAddr = it },
+                    label = { Text(stringResource(R.string.list_bind_address)) },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = dstAddr,
+                    onValueChange = { dstAddr = it },
+                    label = { Text(stringResource(R.string.list_destination_address)) },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                ChoiceRow(
+                    stringResource(R.string.protocol_label),
+                    proto,
+                    listOf(
+                        ChoiceOption("tcp", stringResource(R.string.protocol_tcp)),
+                        ChoiceOption("udp", stringResource(R.string.protocol_udp)),
+                    ),
+                ) { proto = it }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (editingIndex != null) {
+                        TextButton(onClick = { reset() }) { Text(stringResource(R.string.action_cancel)) }
+                    }
+                    Button(
+                        onClick = { commit() },
+                        enabled = bindAddr.isNotBlank() && dstAddr.isNotBlank(),
+                        shape = MaterialTheme.shapes.medium,
+                    ) {
                         Icon(if (editingIndex == null) Icons.Default.Add else Icons.Default.Check, null, Modifier.size(18.dp))
                         Spacer(Modifier.size(8.dp))
-                        Text(if (editingIndex == null) "Add" else "Update")
+                        Text(stringResource(if (editingIndex == null) R.string.action_add else R.string.action_update))
                     }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 if (draft.isEmpty()) {
-                    Text("No port forwards yet.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        stringResource(R.string.list_no_port_forwards),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         draft.forEachIndexed { index, forward ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("${forward.bindAddr} → ${forward.dstAddr} (${forward.proto})", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                                IconButton(onClick = { editingIndex = index; bindAddr = forward.bindAddr; dstAddr = forward.dstAddr; proto = forward.proto }) {
-                                    Icon(Icons.Default.Edit, contentDescription = "Edit forward")
+                                Text(
+                                    stringResource(R.string.list_port_forward_summary, forward.bindAddr, forward.dstAddr, forward.proto),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                IconButton(onClick = {
+                                    editingIndex = index
+                                    bindAddr = forward.bindAddr
+                                    dstAddr = forward.dstAddr
+                                    proto = forward.proto
+                                }) {
+                                    Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.content_edit_forward))
                                 }
                                 IconButton(onClick = { draft = draft.filterIndexed { i, _ -> i != index } }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete forward")
+                                    Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.content_delete_forward))
                                 }
                             }
                         }
@@ -312,7 +500,12 @@ internal fun PortForwardEditorDialog(forwards: List<PortForward>, onDismiss: () 
                 }
             }
         },
-        confirmButton = { Button(onClick = { if (draft != forwards) onChange(draft); onDismiss() }, shape = MaterialTheme.shapes.medium) { Text("Done") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        confirmButton = {
+            Button(
+                onClick = { if (draft != forwards) onChange(draft); onDismiss() },
+                shape = MaterialTheme.shapes.medium,
+            ) { Text(stringResource(R.string.action_done)) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } },
     )
 }

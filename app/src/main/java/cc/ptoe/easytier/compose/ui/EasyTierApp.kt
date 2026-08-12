@@ -7,8 +7,6 @@ import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -54,9 +52,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.annotation.StringRes
+import cc.ptoe.easytier.compose.R
 import cc.ptoe.easytier.compose.data.RuntimeState
 import cc.ptoe.easytier.compose.ui.screens.DashboardScreen
 import cc.ptoe.easytier.compose.ui.screens.PeersScreen
@@ -66,12 +67,12 @@ import cc.ptoe.easytier.compose.ui.screens.SettingsScreen
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 
-private enum class Destination(val label: String, val icon: ImageVector) {
-    Dashboard("Dashboard", Icons.Default.Dashboard),
-    Profiles("Profiles", Icons.Default.Layers),
-    Peers("Peers", Icons.Default.People),
-    Settings("Settings", Icons.Default.Settings),
-    Editor("Profile", Icons.Default.Edit),
+private enum class Destination(@StringRes val labelRes: Int, val icon: ImageVector) {
+    Dashboard(R.string.nav_dashboard, Icons.Default.Dashboard),
+    Profiles(R.string.nav_profiles, Icons.Default.Layers),
+    Peers(R.string.nav_peers, Icons.Default.People),
+    Settings(R.string.nav_settings, Icons.Default.Settings),
+    Editor(R.string.nav_profile, Icons.Default.Edit),
 }
 
 @Composable
@@ -143,7 +144,7 @@ fun EasyTierApp(
         topBar = {
             Box {
                 val tabDestination = if (destination == Destination.Editor) Destination.Profiles else destination
-                TopAppBar(title = { Text(tabDestination.label) })
+                TopAppBar(title = { Text(stringResource(tabDestination.labelRes)) })
                 if (editorShown) {
                     TopAppBar(
                         modifier = Modifier.graphicsLayer {
@@ -160,22 +161,23 @@ fun EasyTierApp(
                                 translationX = (1f - p) * size.width + bp * size.width * 0.35f
                             }
                         },
-                        title = { Text(Destination.Editor.label) },
+                        title = { Text(stringResource(Destination.Editor.labelRes)) },
                         navigationIcon = {
                             IconButton(onClick = {
                                 viewModel.discardDraft()
                                 destination = Destination.Profiles
                             }) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                             }
                         },
                         actions = {
+                            val saveDescription = stringResource(R.string.content_save_profile)
                             IconButton(
                                 onClick = viewModel::saveDraft,
                                 enabled = !draftRunning,
-                                modifier = Modifier.semantics { contentDescription = "save_profile" },
+                                modifier = Modifier.semantics { contentDescription = saveDescription },
                             ) {
-                                Icon(Icons.Default.Check, contentDescription = "Save")
+                                Icon(Icons.Default.Check, contentDescription = stringResource(R.string.action_save))
                             }
                         },
                     )
@@ -214,7 +216,7 @@ fun EasyTierApp(
                                 slideOutHorizontally(tween(duration)) { -it * dir }
                         }
                     },
-                    label = "tab",
+                    label = stringResource(R.string.transition_tab),
                 ) { tab ->
                     when (tab) {
                         Destination.Dashboard -> DashboardScreen(
@@ -237,7 +239,7 @@ fun EasyTierApp(
                             onGlobalSettings = viewModel::updateGlobalSettings,
                             reset = viewModel::resetProfiles,
                         )
-                        Destination.Editor -> {}
+                        Destination.Editor -> Unit
                     }
                 }
 
@@ -285,11 +287,12 @@ fun EasyTierApp(
 private fun AppNavigationBar(selected: Destination, select: (Destination) -> Unit) {
     NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
         Destination.entries.filter { it != Destination.Editor }.forEach { item ->
+            val label = stringResource(item.labelRes)
             NavigationBarItem(
                 selected = selected == item,
                 onClick = { select(item) },
-                icon = { Icon(item.icon, contentDescription = item.label) },
-                label = { Text(item.label) },
+                icon = { Icon(item.icon, contentDescription = label) },
+                label = { Text(label) },
             )
         }
     }
@@ -300,11 +303,12 @@ private fun AppNavigationRail(selected: Destination, select: (Destination) -> Un
     NavigationRail(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
         Spacer(Modifier.height(16.dp))
         Destination.entries.filter { it != Destination.Editor }.forEach { item ->
+            val label = stringResource(item.labelRes)
             NavigationRailItem(
                 selected = selected == item,
                 onClick = { select(item) },
-                icon = { Icon(item.icon, contentDescription = item.label) },
-                label = { Text(item.label) },
+                icon = { Icon(item.icon, contentDescription = label) },
+                label = { Text(label) },
             )
         }
     }

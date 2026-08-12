@@ -32,9 +32,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import cc.ptoe.easytier.compose.BuildConfig
+import cc.ptoe.easytier.compose.R
 import cc.ptoe.easytier.compose.data.GlobalSettings
 import cc.ptoe.easytier.compose.data.RuntimeState
 import cc.ptoe.easytier.compose.data.TunMode
@@ -70,7 +72,6 @@ internal fun SettingsScreen(
 
     var confirmReset by remember { mutableStateOf(false) }
     var tunDeviceName by remember(settings.tunDeviceName) { mutableStateOf(settings.tunDeviceName) }
-    // Engine text fields keep local drafts; blank bps limit means "no limit".
     var mtuInput by remember(settings.mtu) { mutableStateOf(settings.mtu.toString()) }
     var threadCountInput by remember(settings.multiThreadCount) { mutableStateOf(settings.multiThreadCount.toString()) }
     var foreignRelayBpsInput by remember(settings.foreignRelayBpsLimit) {
@@ -93,22 +94,19 @@ internal fun SettingsScreen(
         item {
             SettingsGroup {
                 Column(Modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Global overrides", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                    Text(stringResource(R.string.settings_global_overrides), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    // TUN Mode switch — always visible. Under No TUN, Root mode
-                    // still matters: it runs the EasyTier core in the root daemon
-                    // so its traffic uses the physical NIC instead of going
-                    // through VpnService / other proxies' TUNs.
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text("TUN Mode", style = MaterialTheme.typography.bodyLarge)
+                            Text(stringResource(R.string.settings_tun_mode), style = MaterialTheme.typography.bodyLarge)
                             Text(
-                                when {
-                                    tunMode == TunMode.ROOT_TUN && settings.noTun ->
-                                        "Root — core runs in root daemon via physical NIC"
-                                    tunMode == TunMode.ROOT_TUN -> "Root"
-                                    else -> "VPN Service"
-                                },
+                                stringResource(
+                                    when {
+                                        tunMode == TunMode.ROOT_TUN && settings.noTun -> R.string.settings_tun_root_no_tun
+                                        tunMode == TunMode.ROOT_TUN -> R.string.settings_tun_root
+                                        else -> R.string.settings_tun_vpn_service
+                                    },
+                                ),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -121,8 +119,6 @@ internal fun SettingsScreen(
                             enabled = profile != null && !active,
                         )
                     }
-                    // TUN device name only applies to Root mode (and only when TUN is not disabled).
-                    // Saved instantly on change; downstream falls back to "easytier0" when blank.
                     AnimatedVisibility(visible = !settings.noTun && tunMode == TunMode.ROOT_TUN) {
                         OutlinedTextField(
                             value = tunDeviceName,
@@ -130,16 +126,16 @@ internal fun SettingsScreen(
                                 tunDeviceName = it
                                 onGlobalSettings(settings.copy(tunDeviceName = it))
                             },
-                            label = { Text("TUN device name") },
+                            label = { Text(stringResource(R.string.settings_tun_device_name)) },
                             singleLine = true,
                             shape = MaterialTheme.shapes.medium,
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
-                    SwitchRow("No TUN", settings.noTun) { checked ->
+                    SwitchRow(stringResource(R.string.settings_no_tun), settings.noTun) { checked ->
                         onGlobalSettings(settings.copy(noTun = checked))
                     }
-                    SwitchRow("Start on boot", settings.startOnBoot) { checked ->
+                    SwitchRow(stringResource(R.string.settings_start_on_boot), settings.startOnBoot) { checked ->
                         onGlobalSettings(settings.copy(startOnBoot = checked))
                     }
                 }
@@ -149,35 +145,51 @@ internal fun SettingsScreen(
         item {
             SettingsGroup {
                 Column(Modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Engine", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                    Text(stringResource(R.string.settings_engine), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     Text(
-                        "Device-local options shared by all profiles. They apply to every EasyTier network and do not affect other devices.",
+                        stringResource(R.string.settings_engine_description),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    // Text fields save instantly while the input is valid; invalid input keeps
-                    // the last persisted value and shows an inline error.
-                    FormField("MTU", mtuInput, if (mtuValid) null else "MTU must be between 576 and 9000") { v ->
+                    FormField(
+                        stringResource(R.string.settings_mtu),
+                        mtuInput,
+                        if (mtuValid) null else stringResource(R.string.error_mtu_range),
+                    ) { v ->
                         mtuInput = v.filter { c -> c.isDigit() }.take(5)
                         mtuInput.toIntOrNull()?.takeIf { it in 576..9000 }?.let { mtu ->
                             onGlobalSettings(settings.copy(mtu = mtu))
                         }
                     }
-                    SwitchRow("Multi-thread", settings.multiThread) { checked -> onGlobalSettings(settings.copy(multiThread = checked)) }
-                    FormField("Multi-thread count", threadCountInput, if (threadCountValid) null else "Thread count must be greater than 0") { v ->
+                    SwitchRow(stringResource(R.string.settings_multi_thread), settings.multiThread) { checked ->
+                        onGlobalSettings(settings.copy(multiThread = checked))
+                    }
+                    FormField(
+                        stringResource(R.string.settings_multi_thread_count),
+                        threadCountInput,
+                        if (threadCountValid) null else stringResource(R.string.error_thread_count_positive),
+                    ) { v ->
                         threadCountInput = v.filter { c -> c.isDigit() }.take(3)
                         threadCountInput.toIntOrNull()?.takeIf { it > 0 }?.let { count ->
                             onGlobalSettings(settings.copy(multiThreadCount = count))
                         }
                     }
-                    FormField("Foreign relay bps limit", foreignRelayBpsInput, if (foreignRelayBps != null) null else "Must be a non-negative number (blank = no limit)") { v ->
+                    FormField(
+                        stringResource(R.string.settings_foreign_relay_bps_limit),
+                        foreignRelayBpsInput,
+                        if (foreignRelayBps != null) null else stringResource(R.string.settings_bps_invalid),
+                    ) { v ->
                         foreignRelayBpsInput = v.filter { c -> c.isDigit() }.take(19)
                         parseBpsLimit(foreignRelayBpsInput)?.let { limit ->
                             onGlobalSettings(settings.copy(foreignRelayBpsLimit = limit))
                         }
                     }
-                    FormField("Instance recv bps limit", instanceRecvBpsInput, if (instanceRecvBps != null) null else "Must be a non-negative number (blank = no limit)") { v ->
+                    FormField(
+                        stringResource(R.string.settings_instance_recv_bps_limit),
+                        instanceRecvBpsInput,
+                        if (instanceRecvBps != null) null else stringResource(R.string.settings_bps_invalid),
+                    ) { v ->
                         instanceRecvBpsInput = v.filter { c -> c.isDigit() }.take(19)
                         parseBpsLimit(instanceRecvBpsInput)?.let { limit ->
                             onGlobalSettings(settings.copy(instanceRecvBpsLimit = limit))
@@ -192,8 +204,8 @@ internal fun SettingsScreen(
                 SettingsGroup {
                     SettingsItem(
                         icon = Icons.Default.NotificationsActive,
-                        title = "Notifications",
-                        subtitle = "Allow for VPN status",
+                        title = stringResource(R.string.settings_notifications),
+                        subtitle = stringResource(R.string.settings_notifications_subtitle),
                         onClick = { permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) },
                     )
                 }
@@ -204,14 +216,14 @@ internal fun SettingsScreen(
             SettingsGroup {
                 SettingsItem(
                     icon = Icons.Default.Router,
-                    title = "EasyTier",
-                    subtitle = "Version ${BuildConfig.VERSION_NAME}",
+                    title = stringResource(R.string.app_name),
+                    subtitle = stringResource(R.string.settings_version, BuildConfig.VERSION_NAME),
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingsItem(
                     icon = Icons.Default.RestartAlt,
-                    title = "Reset all profiles",
-                    subtitle = "Restore default configuration",
+                    title = stringResource(R.string.settings_reset_all),
+                    subtitle = stringResource(R.string.settings_restore_default),
                     onClick = { confirmReset = true },
                 )
             }
@@ -221,15 +233,15 @@ internal fun SettingsScreen(
     if (confirmReset) {
         AlertDialog(
             onDismissRequest = { confirmReset = false },
-            title = { Text("Reset all profiles?") },
-            text = { Text("The current active connection will stop first.") },
+            title = { Text(stringResource(R.string.settings_reset_title)) },
+            text = { Text(stringResource(R.string.settings_reset_message)) },
             confirmButton = {
                 Button(
                     onClick = { reset(); confirmReset = false },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                ) { Text("Reset") }
+                ) { Text(stringResource(R.string.action_reset)) }
             },
-            dismissButton = { OutlinedButton(onClick = { confirmReset = false }) { Text("Cancel") } },
+            dismissButton = { OutlinedButton(onClick = { confirmReset = false }) { Text(stringResource(R.string.action_cancel)) } },
         )
     }
 }

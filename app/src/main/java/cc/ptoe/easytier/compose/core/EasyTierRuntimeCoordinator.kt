@@ -1,7 +1,9 @@
 package cc.ptoe.easytier.compose.core
+import androidx.annotation.StringRes
 
 import android.content.Context
 import cc.ptoe.easytier.compose.data.EasyTierProfile
+import cc.ptoe.easytier.compose.R
 import cc.ptoe.easytier.compose.data.GlobalSettings
 import cc.ptoe.easytier.compose.data.RuntimeState
 import cc.ptoe.easytier.compose.data.RuntimeStatus
@@ -47,7 +49,7 @@ class EasyTierRuntimeCoordinator(
         // so peers see a recognizable identity without forcing the user to configure it.
         val effectiveProfile = profile.withDeviceHostnameIfBlank(context)
         val errors = ProfileValidator().validate(effectiveProfile, globalSettings)
-        if (errors.isNotEmpty()) return@withLock failure(effectiveProfile, errors.values.first())
+        if (errors.isNotEmpty()) return@withLock failure(effectiveProfile, errors.values.first().resolve(context))
         val toml = TomlConfigBuilder.build(effectiveProfile, globalSettings)
         stopLocked()
         activeProfile = effectiveProfile
@@ -182,7 +184,7 @@ class EasyTierRuntimeCoordinator(
 
     private suspend fun startVpn(profile: EasyTierProfile, toml: String, globalSettings: GlobalSettings): RuntimeStatus = try {
         EasyTierJni.retainNetworkInstance(null)
-        require(EasyTierJni.runNetworkInstance(toml) == 0) { nativeError("EasyTier failed to start") }
+        require(EasyTierJni.runNetworkInstance(toml) == 0) { nativeError(R.string.error_easytier_start_failed) }
         vpn.start(profile, toml, globalSettings).also {
             mutableStatus.value = it
             if (it.state == RuntimeState.STARTING || it.state == RuntimeState.RUNNING) pollVpn()
@@ -196,7 +198,7 @@ class EasyTierRuntimeCoordinator(
     } catch (error: Throwable) {
         vpn.stop()
         runCatching { EasyTierJni.retainNetworkInstance(null) }
-        failure(profile, error.message ?: nativeError("EasyTier failed to start"))
+        failure(profile, error.message ?: nativeError(R.string.error_easytier_start_failed))
     }
 
     private suspend fun startRoot(profile: EasyTierProfile, toml: String, globalSettings: GlobalSettings): RuntimeStatus {
@@ -214,7 +216,7 @@ class EasyTierRuntimeCoordinator(
      */
     private suspend fun startNoTun(profile: EasyTierProfile, toml: String): RuntimeStatus = try {
         EasyTierJni.retainNetworkInstance(null)
-        require(EasyTierJni.runNetworkInstance(toml) == 0) { nativeError("EasyTier failed to start") }
+        require(EasyTierJni.runNetworkInstance(toml) == 0) { nativeError(R.string.error_easytier_start_failed) }
         mutableStatus.value = RuntimeStatus(RuntimeState.RUNNING, profile.id, profile.tunMode, null, null, null)
         pollNoTun()
         mutableStatus.value
@@ -226,7 +228,7 @@ class EasyTierRuntimeCoordinator(
         throw cancellation
     } catch (error: Throwable) {
         runCatching { EasyTierJni.retainNetworkInstance(null) }
-        failure(profile, error.message ?: nativeError("EasyTier failed to start"))
+        failure(profile, error.message ?: nativeError(R.string.error_easytier_start_failed))
     }
 
     private suspend fun stopLocked(): RuntimeStatus {
@@ -340,5 +342,5 @@ class EasyTierRuntimeCoordinator(
     private fun failure(profile: EasyTierProfile, error: String): RuntimeStatus =
         RuntimeStatus(RuntimeState.ERROR, profile.id, profile.tunMode, null, null, error).also { mutableStatus.value = it }
 
-    private fun nativeError(fallback: String) = EasyTierJni.getLastError() ?: fallback
+    private fun nativeError(@StringRes fallbackRes: Int) = EasyTierJni.getLastError() ?: context.getString(fallbackRes)
 }

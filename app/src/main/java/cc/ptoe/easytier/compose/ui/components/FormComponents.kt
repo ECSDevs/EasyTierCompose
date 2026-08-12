@@ -17,8 +17,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenuItem
@@ -42,8 +42,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import cc.ptoe.easytier.compose.R
 
 @Composable
 internal fun SectionCard(title: String, icon: ImageVector, content: @Composable ColumnScope.() -> Unit) {
@@ -96,12 +99,14 @@ internal fun SwitchRow(label: String, checked: Boolean, enabled: Boolean = true,
     }
 }
 
+internal data class ChoiceOption(val value: String, val label: String)
 @Composable
-internal fun ChoiceRow(label: String, value: String, options: List<String>, onChange: (String) -> Unit) {
+internal fun ChoiceRow(label: String, value: String, options: List<ChoiceOption>, onChange: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
+    val selectedLabel = options.firstOrNull { it.value == value }?.label ?: value
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
         OutlinedTextField(
-            value = value,
+            value = selectedLabel,
             onValueChange = {},
             readOnly = true,
             label = { Text(label) },
@@ -111,7 +116,7 @@ internal fun ChoiceRow(label: String, value: String, options: List<String>, onCh
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             options.forEach { option ->
-                DropdownMenuItem(text = { Text(option) }, onClick = { onChange(option); expanded = false })
+                DropdownMenuItem(text = { Text(option.label) }, onClick = { onChange(option.value); expanded = false })
             }
         }
     }
@@ -129,7 +134,7 @@ internal fun ListField(
     val fieldValue = when {
         items.isEmpty() -> ""
         items.size == 1 -> items.first()
-        else -> "${items.size} entries"
+        else -> pluralStringResource(R.plurals.list_entry_count, items.size, items.size)
     }
     Box(Modifier.fillMaxWidth()) {
         OutlinedTextField(
@@ -141,7 +146,7 @@ internal fun ListField(
             supportingText = if (error == null) null else { { Text(error) } },
             isError = error != null,
             trailingIcon = {
-                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Edit $label")
+                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = stringResource(R.string.content_edit_field, label))
             },
             shape = MaterialTheme.shapes.medium,
             modifier = Modifier.fillMaxWidth(),
@@ -192,29 +197,28 @@ internal fun ListEditorDialog(
         title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (editingIndex != null) {
-                    Text("Edit entry", style = MaterialTheme.typography.labelLarge)
-                } else {
-                    Text("Add new entry", style = MaterialTheme.typography.labelLarge)
-                }
+                Text(
+                    stringResource(if (editingIndex != null) R.string.list_edit_entry else R.string.list_new_entry),
+                    style = MaterialTheme.typography.labelLarge,
+                )
                 OutlinedTextField(
                     value = editingValue,
                     onValueChange = { editingValue = it },
-                    label = { Text(if (editingIndex != null) "Entry value" else "New entry") },
+                    label = { Text(stringResource(if (editingIndex != null) R.string.list_entry_value else R.string.list_new_entry_label)) },
                     singleLine = true,
                     shape = MaterialTheme.shapes.medium,
                     modifier = Modifier.fillMaxWidth(),
                     trailingIcon = {
                         if (editingValue.isNotEmpty()) {
                             IconButton(onClick = { editingValue = "" }) {
-                                Icon(Icons.Default.Close, contentDescription = "Clear")
+                                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_clear))
                             }
                         }
                     },
                 )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                     if (editingIndex != null) {
-                        TextButton(onClick = { editingIndex = null; editingValue = "" }) { Text("Cancel") }
+                        TextButton(onClick = { editingIndex = null; editingValue = "" }) { Text(stringResource(R.string.action_cancel)) }
                     }
                     Button(
                         onClick = { commit() },
@@ -227,7 +231,7 @@ internal fun ListEditorDialog(
                             Modifier.size(18.dp),
                         )
                         Spacer(Modifier.size(8.dp))
-                        Text(if (editingIndex == null) "Add" else "Update")
+                        Text(stringResource(if (editingIndex == null) R.string.action_add else R.string.action_update))
                     }
                 }
 
@@ -235,7 +239,7 @@ internal fun ListEditorDialog(
 
                 if (draft.isEmpty()) {
                     Text(
-                        text = "No entries yet. Add one above.",
+                        text = stringResource(R.string.list_empty),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -249,10 +253,10 @@ internal fun ListEditorDialog(
                                     modifier = Modifier.weight(1f),
                                 )
                                 IconButton(onClick = { editingIndex = index; editingValue = item }) {
-                                    Icon(Icons.Default.Edit, contentDescription = "Edit entry")
+                                    Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.content_edit_entry))
                                 }
                                 IconButton(onClick = { draft = draft.filterIndexed { i, _ -> i != index } }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete entry")
+                                    Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.content_delete_entry))
                                 }
                             }
                         }
@@ -267,10 +271,10 @@ internal fun ListEditorDialog(
                     onDismiss()
                 },
                 shape = MaterialTheme.shapes.medium,
-            ) { Text("Done") }
+            ) { Text(stringResource(R.string.action_done)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         },
     )
 }

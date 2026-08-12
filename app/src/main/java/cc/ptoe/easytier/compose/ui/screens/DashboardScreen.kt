@@ -45,11 +45,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import cc.ptoe.easytier.compose.core.toV2rayShareLink
+import cc.ptoe.easytier.compose.R
 import cc.ptoe.easytier.compose.data.RuntimeState
 import cc.ptoe.easytier.compose.data.RuntimeStatus
 import cc.ptoe.easytier.compose.data.WireGuardPortalInfo
@@ -177,17 +179,23 @@ private fun StatusCard(
             Icons.Default.PowerSettingsNew,
         )
     }
-    val subtitle = when {
-        !hasProfile -> "Click to create a profile"
-        active -> "Click to disconnect"
-        else -> "Click to connect"
+    val subtitleRes = when {
+        !hasProfile -> R.string.dashboard_click_create_profile
+        active -> R.string.dashboard_click_disconnect
+        else -> R.string.dashboard_click_connect
     }
+    val actionDescriptionRes = when {
+        !hasProfile -> R.string.content_create_profile
+        active -> R.string.content_disconnect
+        else -> R.string.content_connect
+    }
+    val actionDescription = stringResource(actionDescriptionRes)
 
     Surface(
         onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
-            .semantics { contentDescription = if (active) "disconnect_button" else "connect_button" },
+            .semantics { contentDescription = actionDescription },
         shape = AlertDialogDefaults.shape,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         tonalElevation = AlertDialogDefaults.TonalElevation,
@@ -225,12 +233,12 @@ private fun StatusCard(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
-                    text = profileName ?: "No profile selected",
+                    text = profileName ?: stringResource(R.string.dashboard_no_profile),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
-                    text = subtitle,
+                    text = stringResource(subtitleRes),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -247,35 +255,41 @@ private fun StatusDetailsGroup(
     natType: String?,
     statusState: RuntimeState,
 ) {
-    val statusText = statusState.name.lowercase().replaceFirstChar { it.uppercase() }
+    val statusText = when (statusState) {
+        RuntimeState.STOPPED -> stringResource(R.string.status_stopped)
+        RuntimeState.STARTING -> stringResource(R.string.status_starting)
+        RuntimeState.RUNNING -> stringResource(R.string.status_running)
+        RuntimeState.STOPPING -> stringResource(R.string.status_stopping)
+        RuntimeState.ERROR -> stringResource(R.string.status_error)
+    }
     SettingsGroup {
         StatusDetailRow(
             icon = Icons.Default.Layers,
-            title = "Network",
+            title = stringResource(R.string.detail_network),
             value = networkName,
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         StatusDetailRow(
             icon = Icons.Default.Router,
-            title = "Virtual IP",
+            title = stringResource(R.string.detail_virtual_ip),
             value = virtualIpv4,
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         StatusDetailRow(
             icon = Icons.Default.AdminPanelSettings,
-            title = "Hostname",
+            title = stringResource(R.string.detail_hostname),
             value = hostname,
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         StatusDetailRow(
             icon = Icons.Default.VpnKey,
-            title = "NAT type",
-            value = natType,
+            title = stringResource(R.string.detail_nat_type),
+            value = localizedNatType(natType),
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         StatusDetailRow(
             icon = Icons.Default.Check,
-            title = "Status",
+            title = stringResource(R.string.detail_status),
             value = statusText,
         )
     }
@@ -307,7 +321,7 @@ private fun StatusDetailRow(
             color = MaterialTheme.colorScheme.onSurface,
         )
         Text(
-            text = value?.ifEmpty { null } ?: "—",
+            text = value?.ifEmpty { null } ?: stringResource(R.string.value_unavailable),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -353,44 +367,40 @@ private fun WireGuardPortalCard(portal: WireGuardPortalInfo?, remark: String) {
                     modifier = Modifier.size(24.dp),
                 )
                 Text(
-                    text = "WireGuard Portal",
+                    text = stringResource(R.string.wireguard_portal),
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 if (portal != null) {
-                    // Offer both formats: the v2rayN-style wireguard:// share link can be
-                    // imported directly into v2rayN/v2rayNG, while the raw WireGuard INI
-                    // config can be imported by v2rayN or used to fill in NekoBox manually
-                    // (NekoBox has no wireguard:// share link parser at all).
                     var menuExpanded by remember { mutableStateOf(false) }
                     Box {
                         TextButton(onClick = { menuExpanded = true }) {
-                            Text(if (copied) "Copied" else "Copy")
+                            Text(stringResource(if (copied) R.string.action_copied else R.string.action_copy))
                         }
                         DropdownMenu(
                             expanded = menuExpanded,
                             onDismissRequest = { menuExpanded = false },
                         ) {
                             DropdownMenuItem(
-                                text = { Text("Share link (v2rayN style)") },
+                                text = { Text(stringResource(R.string.wireguard_share_link)) },
                                 onClick = {
                                     menuExpanded = false
                                     val shareLink = portal.toV2rayShareLink(remark) ?: portal.clientConfig
-                                    val clipboard =
-                                        context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    clipboard.setPrimaryClip(ClipData.newPlainText("WireGuard node link", shareLink))
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(
+                                        ClipData.newPlainText(context.getString(R.string.wireguard_node_link_clipboard), shareLink),
+                                    )
                                     copied = true
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text("WireGuard config (INI)") },
+                                text = { Text(stringResource(R.string.wireguard_config_ini)) },
                                 onClick = {
                                     menuExpanded = false
-                                    val clipboard =
-                                        context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                     clipboard.setPrimaryClip(
-                                        ClipData.newPlainText("WireGuard config", portal.clientConfig),
+                                        ClipData.newPlainText(context.getString(R.string.wireguard_config_clipboard), portal.clientConfig),
                                     )
                                     copied = true
                                 },
@@ -402,18 +412,17 @@ private fun WireGuardPortalCard(portal: WireGuardPortalInfo?, remark: String) {
 
             if (portal == null) {
                 Text(
-                    text = "Waiting for the WireGuard portal to start…",
+                    text = stringResource(R.string.wireguard_waiting),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
-                // SelectionContainer makes the credential values long-press selectable/copyable.
                 SelectionContainer {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        parseWireGuardConfig(portal.clientConfig).forEach { (label, value) ->
+                        parseWireGuardConfig(portal.clientConfig).forEach { (key, value) ->
                             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(
-                                    text = label,
+                                    text = wireGuardFieldLabel(key)?.let { stringResource(it) } ?: key,
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -429,7 +438,7 @@ private fun WireGuardPortalCard(portal: WireGuardPortalInfo?, remark: String) {
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(
-                                    text = "Connected clients",
+                                    text = stringResource(R.string.wireguard_connected_clients),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -456,16 +465,32 @@ private fun parseWireGuardConfig(config: String): List<Pair<String, String>> =
         .map { it.substringBefore('#').trim() }
         .filter { it.isNotEmpty() && !it.startsWith('[') && it.contains('=') }
         .map { line ->
-            val key = line.substringBefore('=').trim()
-            val value = line.substringAfter('=').trim()
-            wireGuardFieldLabel(key) to value
+            line.substringBefore('=').trim() to line.substringAfter('=').trim()
         }
         .toList()
 
-private fun wireGuardFieldLabel(key: String): String = when (key) {
-    "PrivateKey" -> "Private Key"
-    "PublicKey" -> "Public Key"
-    "AllowedIPs" -> "Allowed IPs"
-    "PersistentKeepalive" -> "Persistent Keepalive"
-    else -> key
+private fun wireGuardFieldLabel(key: String): Int? = when (key) {
+    "PrivateKey" -> R.string.wireguard_private_key
+    "PublicKey" -> R.string.wireguard_public_key
+    "AllowedIPs" -> R.string.wireguard_allowed_ips
+    "PersistentKeepalive" -> R.string.wireguard_persistent_keepalive
+    else -> null
+}
+
+@Composable
+internal fun localizedNatType(raw: String?): String? {
+    val value = raw?.takeIf { it.isNotBlank() } ?: return null
+    return when (value) {
+        "Unknown" -> stringResource(R.string.nat_unknown)
+        "OpenInternet" -> stringResource(R.string.nat_open_internet)
+        "NoPAT" -> stringResource(R.string.nat_no_pat)
+        "FullCone" -> stringResource(R.string.nat_full_cone)
+        "Restricted" -> stringResource(R.string.nat_restricted)
+        "PortRestricted" -> stringResource(R.string.nat_port_restricted)
+        "Symmetric" -> stringResource(R.string.nat_symmetric)
+        "SymUdpFirewall" -> stringResource(R.string.nat_symmetric_udp_firewall)
+        "SymmetricEasyInc" -> stringResource(R.string.nat_symmetric_easy_increase)
+        "SymmetricEasyDec" -> stringResource(R.string.nat_symmetric_easy_decrease)
+        else -> value
+    }
 }

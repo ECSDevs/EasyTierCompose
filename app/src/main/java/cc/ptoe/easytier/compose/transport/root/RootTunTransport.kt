@@ -1,4 +1,5 @@
 package cc.ptoe.easytier.compose.transport.root
+import cc.ptoe.easytier.compose.R
 
 import android.content.ComponentName
 import android.content.Context
@@ -43,14 +44,14 @@ class RootTunTransport(private val context: Context) : RuntimeTransport {
         override fun onServiceDisconnected(name: ComponentName) {
             service = null
             callback = null
-            if (bound) mutableStatus.value = RuntimeStatus(RuntimeState.ERROR, activeProfile?.id, activeProfile?.tunMode, null, null, "Root helper disconnected")
+            if (bound) mutableStatus.value = RuntimeStatus(RuntimeState.ERROR, activeProfile?.id, activeProfile?.tunMode, null, null, context.getString(R.string.error_root_helper_disconnected))
         }
     }
 
     override suspend fun start(profile: EasyTierProfile, toml: String, globalSettings: GlobalSettings): RuntimeStatus {
         activeProfile = profile
         mutableStatus.value = RuntimeStatus(RuntimeState.STARTING, profile.id, profile.tunMode, null, null, null)
-        val remote = bind() ?: return error(profile, "Root helper disconnected")
+        val remote = bind() ?: return error(profile, context.getString(R.string.error_root_helper_disconnected))
         return try {
             registerCallback(remote)
             remote.start(profile.id, toml, TomlConfigBuilder.rootTunSpec(profile, globalSettings))
@@ -65,7 +66,7 @@ class RootTunTransport(private val context: Context) : RuntimeTransport {
                 // Timed out — stop the daemon so the root process doesn't linger in
                 // STARTING, leaving no way for the user to disconnect from ERROR.
                 stop()
-                error(profile, "Root helper start timed out")
+                error(profile, context.getString(R.string.error_root_helper_start_timed_out))
             }
         } catch (cancellation: CancellationException) {
             // External cancellation (e.g. BootCompletedReceiver's 8s budget): the caller
@@ -76,7 +77,7 @@ class RootTunTransport(private val context: Context) : RuntimeTransport {
             throw cancellation
         } catch (e: Throwable) {
             stop()
-            error(profile, e.message ?: "Root helper disconnected")
+            error(profile, e.message ?: context.getString(R.string.error_root_helper_disconnected))
         }
     }
 

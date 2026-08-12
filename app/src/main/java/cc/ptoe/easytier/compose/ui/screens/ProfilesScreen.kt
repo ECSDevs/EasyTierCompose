@@ -33,9 +33,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import cc.ptoe.easytier.compose.R
 import cc.ptoe.easytier.compose.data.EasyTierProfile
 import cc.ptoe.easytier.compose.data.RuntimeState
 import cc.ptoe.easytier.compose.ui.EasyTierUiState
@@ -54,9 +57,14 @@ internal fun ProfilesScreen(
         LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items(state.profiles, key = { it.id }) { profile ->
                 val isSelected = profile.id == state.selectedProfileId
+                val cardDescription = stringResource(R.string.profiles_card_description, profile.name)
+                val editDescription = stringResource(R.string.content_edit_profile)
+                val deleteDescription = stringResource(R.string.content_delete_profile)
                 OutlinedCard(
                     onClick = { select(profile) },
-                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = "profile_${profile.id}" },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { contentDescription = cardDescription },
                     shape = MaterialTheme.shapes.large,
                     colors = CardDefaults.outlinedCardColors(
                         containerColor = if (isSelected) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainerLow,
@@ -69,7 +77,7 @@ internal fun ProfilesScreen(
                                 if (isSelected) {
                                     AssistChip(
                                         onClick = {},
-                                        label = { Text("Selected", style = MaterialTheme.typography.labelMedium) },
+                                        label = { Text(stringResource(R.string.profiles_selected), style = MaterialTheme.typography.labelMedium) },
                                         colors = AssistChipDefaults.assistChipColors(
                                             containerColor = MaterialTheme.colorScheme.primaryContainer,
                                             labelColor = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -78,47 +86,64 @@ internal fun ProfilesScreen(
                                 }
                             }
                             Text(
-                                text = "${profile.networkName} • ${profile.peers.size} peers",
+                                text = stringResource(
+                                    R.string.profiles_network_summary,
+                                    profile.networkName,
+                                    pluralStringResource(R.plurals.peer_count, profile.peers.size, profile.peers.size),
+                                ),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         IconButton(onClick = { edit(profile) }) {
-                            Icon(Icons.Default.Edit, contentDescription = "Edit Profile")
+                            Icon(Icons.Default.Edit, contentDescription = editDescription)
                         }
                         IconButton(
                             enabled = state.runtime.profileId != profile.id || state.runtime.state == RuntimeState.STOPPED,
                             onClick = { pendingDelete = profile },
-                            modifier = Modifier.semantics { contentDescription = "delete_profile" },
+                            modifier = Modifier.semantics { contentDescription = deleteDescription },
                         ) {
-                            Icon(Icons.Default.Delete, contentDescription = "Delete Profile")
+                            Icon(Icons.Default.Delete, contentDescription = deleteDescription)
                         }
                     }
                 }
             }
         }
+        val createDescription = stringResource(R.string.content_create_profile)
         ExtendedFloatingActionButton(
             onClick = add,
-            modifier = Modifier.align(Alignment.BottomEnd).semantics { contentDescription = "create_profile" },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .semantics { contentDescription = createDescription },
             containerColor = MaterialTheme.colorScheme.primaryContainer,
             contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-            icon = { Icon(Icons.Default.Add, null) },
-            text = { Text("Add Profile") },
+            icon = { Icon(Icons.Default.Add, contentDescription = null) },
+            text = { Text(stringResource(R.string.profiles_add)) },
         )
     }
 
     pendingDelete?.let { profile ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            title = { Text("Delete ${profile.name}?") },
-            text = { Text(if (state.runtime.profileId == profile.id && state.runtime.state != RuntimeState.STOPPED) "Disconnect before deleting" else "This profile will be removed from this device.") },
+            title = { Text(stringResource(R.string.profiles_delete_title, profile.name)) },
+            text = {
+                Text(
+                    stringResource(
+                        if (state.runtime.profileId == profile.id && state.runtime.state != RuntimeState.STOPPED) {
+                            R.string.profiles_disconnect_before_delete
+                        } else {
+                            R.string.profiles_removed_from_device
+                        },
+                    ),
+                )
+            },
             confirmButton = {
                 Button(
                     onClick = { delete(profile); pendingDelete = null },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                ) { Text("Delete") }
+                ) { Text(stringResource(R.string.action_delete)) }
             },
-            dismissButton = { OutlinedButton(onClick = { pendingDelete = null }) { Text("Cancel") } },
+            dismissButton = { OutlinedButton(onClick = { pendingDelete = null }) { Text(stringResource(R.string.action_cancel)) } },
         )
     }
 }

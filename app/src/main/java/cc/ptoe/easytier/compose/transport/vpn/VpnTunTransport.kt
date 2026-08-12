@@ -3,6 +3,7 @@ package cc.ptoe.easytier.compose.transport.vpn
 import android.content.Context
 import android.content.Intent
 import android.net.VpnService
+import cc.ptoe.easytier.compose.R
 import androidx.core.content.ContextCompat
 import cc.ptoe.easytier.compose.data.EasyTierProfile
 import cc.ptoe.easytier.compose.data.GlobalSettings
@@ -48,7 +49,7 @@ class VpnTunTransport(
             mutableStatus.value = RuntimeStatus(RuntimeState.STARTING, profile.id, profile.tunMode, null, null, null)
             val granted = permissionRequester.request(prepared)
             if (!granted) {
-                return RuntimeStatus(RuntimeState.ERROR, profile.id, profile.tunMode, null, null, "VPN permission denied")
+                return RuntimeStatus(RuntimeState.ERROR, profile.id, profile.tunMode, null, null, context.getString(R.string.error_vpn_permission_denied))
                     .also { running = false; mutableStatus.value = it }
             }
         }
@@ -67,7 +68,7 @@ class VpnTunTransport(
         establishedIpv4Cidr = ipv4Cidr
         establishedRoutes = routes
         val state = if (ipv4Cidr.isNullOrBlank()) RuntimeState.STARTING else RuntimeState.RUNNING
-        val tunDevice = if (ipv4Cidr.isNullOrBlank()) null else "Android VPN"
+        val tunDevice = if (ipv4Cidr.isNullOrBlank()) null else context.getString(R.string.vpn_device_name)
         return RuntimeStatus(state, profile.id, profile.tunMode, ipv4Cidr, tunDevice, null)
             .also { mutableStatus.value = it }
     }
@@ -85,7 +86,7 @@ class VpnTunTransport(
             context,
             EasyTierVpnService.intent(context, profile.id, ipv4Cidr, routes, profile.enableMagicDns, activeMtu),
         )
-        return RuntimeStatus(RuntimeState.RUNNING, profile.id, profile.tunMode, ipv4Cidr, "Android VPN", null)
+        return RuntimeStatus(RuntimeState.RUNNING, profile.id, profile.tunMode, ipv4Cidr, context.getString(R.string.vpn_device_name), null)
             .also { mutableStatus.value = it }
     }
 

@@ -75,7 +75,7 @@ class EasyTierVpnService : VpnService() {
     private fun createInterface(ipv4Cidr: String, routes: Array<String>, dns: Boolean, mtu: Int): ParcelFileDescriptor {
         val (address, prefix) = ipv4Cidr.parseCidr()
         val builder = Builder()
-            .setSession("EasyTier")
+            .setSession(getString(R.string.vpn_session_name))
             .setBlocking(false)
             .setMtu(mtu)
             .addAddress(address, prefix)
@@ -97,7 +97,7 @@ class EasyTierVpnService : VpnService() {
         if (dns) builder.addDnsServer(MAGIC_DNS)
         builder.addDisallowedApplication(packageName)
         Log.i(TAG, "createInterface: cidr=$ipv4Cidr mtu=$mtu routes=${routes.size} added=$added dns=$dns")
-        return builder.establish() ?: error("Failed to establish EasyTier VPN")
+        return builder.establish() ?: error(getString(R.string.error_vpn_establish_failed))
     }
 
     private fun closeTunnel() {
@@ -108,8 +108,8 @@ class EasyTierVpnService : VpnService() {
 
     private fun notification() = NotificationCompat.Builder(this, CHANNEL_ID)
         .setSmallIcon(R.mipmap.ic_launcher)
-        .setContentTitle("EasyTier VPN active")
-        .setContentText("EasyTier is routing through Android VPN")
+        .setContentTitle(getString(R.string.vpn_notification_title))
+        .setContentText(getString(R.string.vpn_notification_text))
         .setOngoing(true)
         .setContentIntent(
             PendingIntent.getActivity(
@@ -125,7 +125,7 @@ class EasyTierVpnService : VpnService() {
         super.onCreate()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, "EasyTier VPN", NotificationManager.IMPORTANCE_LOW))
+            manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, getString(R.string.vpn_notification_channel), NotificationManager.IMPORTANCE_LOW))
         }
     }
 

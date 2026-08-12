@@ -2,6 +2,7 @@ package cc.ptoe.easytier.compose
 
 import cc.ptoe.easytier.compose.core.NativeConfigParser
 import cc.ptoe.easytier.compose.core.ProfileValidator
+import cc.ptoe.easytier.compose.core.ValidationMessage
 import cc.ptoe.easytier.compose.core.TomlConfigBuilder
 import cc.ptoe.easytier.compose.data.CompressionAlgo
 import cc.ptoe.easytier.compose.data.EasyTierProfile
@@ -154,12 +155,12 @@ class ProfileConfigTest {
             virtualIpv4 = "10.10.0.2/99",
             peers = listOf(Peer(uri = "")),
         )
-        val errors = ProfileValidator(NativeConfigParser { "native parse failed" })
+        val errors = ProfileValidator(NativeConfigParser { ValidationMessage.Raw("native parse failed") })
             .validate(invalid, GlobalSettings(mtu = 400))
         assertTrue(errors.containsKey("virtualIpv4"))
         assertTrue(errors.containsKey("globalMtu"))
         assertTrue(errors.containsKey("peers"))
-        assertEquals("native parse failed", errors["form"])
+        assertEquals(ValidationMessage.Raw("native parse failed"), errors["form"])
     }
 
     @Test
