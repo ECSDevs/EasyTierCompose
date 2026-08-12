@@ -281,5 +281,4 @@
     <string name="vpn_notification_title">EasyTier VPN 已启用</string>
     <string name="vpn_notification_text">EasyTier 正通过 Android VPN 转发流量</string>
     <string name="vpn_notification_channel">EasyTier VPN</string>
-    <string name="fgs_special_use_subtype">EasyTier 虚拟网络传输</string>
     </resources>

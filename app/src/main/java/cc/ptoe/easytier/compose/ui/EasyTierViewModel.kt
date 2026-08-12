@@ -39,26 +39,40 @@ class EasyTierViewModel(
     private val draft = MutableStateFlow<EasyTierProfile?>(null)
     private val errors = MutableStateFlow<Map<String, ValidationMessage>>(emptyMap())
     private val globalSettings = MutableStateFlow(GlobalSettings())
+    private data class ProfileInputs(
+        val profiles: List<EasyTierProfile>,
+        val persistedSelection: String?,
+        val localSelection: String?,
+        val editing: EasyTierProfile?,
+    )
 
-    val state: StateFlow<EasyTierUiState> = combine(
+    private val profileInputs = combine(
         repository.profiles,
         repository.selectedProfileId,
         selectedId,
         draft,
+    ) { profiles, persistedSelection, localSelection, editing ->
+        ProfileInputs(profiles, persistedSelection, localSelection, editing)
+    }
+
+    val state: StateFlow<EasyTierUiState> = combine(
+        profileInputs,
         coordinator.status,
         errors,
         globalSettings,
-    ) { values ->
-        @Suppress("UNCHECKED_CAST")
-        val profiles = values[0] as List<EasyTierProfile>
-        val persistedSelection = values[1] as String?
-        val localSelection = values[2] as String?
-        val editing = values[3] as EasyTierProfile?
-        val runtime = values[4] as RuntimeStatus
-        val fieldErrors = values[5] as Map<String, ValidationMessage>
-        val settings = values[6] as GlobalSettings
-        EasyTierUiState(profiles, localSelection ?: persistedSelection ?: profiles.firstOrNull()?.id, editing, runtime, fieldErrors, settings)
+    ) { inputs, runtime, fieldErrors, settings ->
+        EasyTierUiState(
+            profiles = inputs.profiles,
+            selectedProfileId = inputs.localSelection
+                ?: inputs.persistedSelection
+                ?: inputs.profiles.firstOrNull()?.id,
+            draft = inputs.editing,
+            runtime = runtime,
+            fieldErrors = fieldErrors,
+            globalSettings = settings,
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), EasyTierUiState())
+
 
     init {
         viewModelScope.launch {

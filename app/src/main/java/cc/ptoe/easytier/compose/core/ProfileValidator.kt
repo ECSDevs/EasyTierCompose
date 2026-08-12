@@ -8,7 +8,7 @@ import cc.ptoe.easytier.compose.data.GlobalSettings
 import java.net.InetAddress
 
 sealed interface ValidationMessage {
-    data class Resource(@StringRes val id: Int) : ValidationMessage
+    data class Resource(@param:StringRes val id: Int) : ValidationMessage
 
     data class Raw(val value: String) : ValidationMessage
 }

@@ -17,7 +17,7 @@ object EasyTierNativeConfigParser : NativeConfigParser {
         }
     } catch (error: RuntimeException) {
         ValidationMessage.Raw(EasyTierJni.getLastError() ?: error.message.orEmpty())
-            .takeUnless { it is ValidationMessage.Raw && it.value.isEmpty() }
+            .takeUnless { it.value.isEmpty() }
             ?: ValidationMessage.Resource(R.string.error_native_rejected)
     }
 }

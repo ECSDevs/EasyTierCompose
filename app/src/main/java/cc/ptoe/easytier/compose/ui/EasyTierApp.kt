@@ -67,7 +67,7 @@ import cc.ptoe.easytier.compose.ui.screens.SettingsScreen
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 
-private enum class Destination(@StringRes val labelRes: Int, val icon: ImageVector) {
+private enum class Destination(@param:StringRes val labelRes: Int, val icon: ImageVector) {
     Dashboard(R.string.nav_dashboard, Icons.Default.Dashboard),
     Profiles(R.string.nav_profiles, Icons.Default.Layers),
     Peers(R.string.nav_peers, Icons.Default.People),
