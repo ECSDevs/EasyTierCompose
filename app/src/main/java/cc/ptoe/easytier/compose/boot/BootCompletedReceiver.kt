@@ -7,6 +7,7 @@ import android.util.Log
 import cc.ptoe.easytier.compose.core.EasyTierRuntimeCoordinator
 import cc.ptoe.easytier.compose.data.GlobalSettingsRepository
 import cc.ptoe.easytier.compose.data.ProfileRepository
+import cc.ptoe.easytier.compose.data.mergeInto
 import cc.ptoe.easytier.compose.transport.vpn.VpnPermissionRequester
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,16 +46,21 @@ class BootCompletedReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val appContext = context.applicationContext
-                val settings = GlobalSettingsRepository(appContext).settings.first()
-                if (!settings.startOnBoot) return@launch
-
                 val repo = ProfileRepository(appContext)
                 val profiles = repo.profiles.first()
                 if (profiles.isEmpty()) return@launch
                 val selectedId = repo.selectedProfileId.first()
                 val profile = profiles.firstOrNull { it.id == selectedId } ?: profiles.first()
 
-                val coordinator = EasyTierRuntimeCoordinator(appContext, NO_OP_REQUESTER)
+                // startOnBoot is a per-profile flag toggled from the main Settings
+                // page; the selected profile's value decides whether to start at boot.
+                val settings = GlobalSettingsRepository(appContext).settings.first()
+                if (!settings.mergeInto(profile).startOnBoot) return@launch
+
+                // Share the process-wide singleton coordinator with MainActivity: if the
+                // boot receiver created its own instance, a later disconnect() from the
+                // activity would not stop this one's poll loop / VPN service.
+                val coordinator = EasyTierRuntimeCoordinator.getInstance(appContext, NO_OP_REQUESTER)
                 // startDetached launches `start` in the coordinator's own SupervisorJob
                 // scope, so this withTimeoutOrNull only abandons *waiting* for the
                 // result — the start operation itself (bind + remote.start + daemon

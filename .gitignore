@@ -112,3 +112,6 @@ Desktop.ini
 
 # AI agent
 .workbuddy/
+
+# JNI backups
+.jni_backup_*/

@@ -62,9 +62,6 @@ android {
         versionName = "0.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
-        }
     }
 
     externalNativeBuild {
@@ -121,6 +118,24 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+        }
+    }
+    splits {
+        abi {
+            // Build one APK per ABI instead of a single fat APK containing all
+            // three native libs (~45 MB). AGP forbids combining this with
+            // ndk.abiFilters, so the ABI list is declared here explicitly.
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = false
+        }
+    }
+    bundle {
+        abi {
+            // Keep ABI splits inside the App Bundle so Google Play assembles
+            // device-specific APKs on the server side.
+            enableSplit = true
         }
     }
 }

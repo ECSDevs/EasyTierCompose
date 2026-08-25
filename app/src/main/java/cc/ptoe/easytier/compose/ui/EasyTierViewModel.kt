@@ -1,5 +1,6 @@
 package cc.ptoe.easytier.compose.ui
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cc.ptoe.easytier.compose.R
@@ -130,7 +131,19 @@ class EasyTierViewModel(
         draft.value = draft.value?.takeIf { it.id == updated.id }?.copy(tunMode = mode)
     }
 
+    fun updateStartOnBoot(enabled: Boolean) = viewModelScope.launch {
+        val profile = selectedProfile() ?: return@launch
+        val updated = profile.copy(startOnBoot = enabled)
+        repository.save(updated)
+        draft.value = draft.value?.takeIf { it.id == updated.id }?.copy(startOnBoot = enabled)
+    }
+
     fun updateGlobalSettings(settings: GlobalSettings) = viewModelScope.launch {
+        Log.d(TAG, "updateGlobalSettings: $settings")
+        // Optimistic update: reflect the change immediately so toggles respond
+        // without waiting for the DataStore write round-trip. The repository
+        // collector then stays in sync with the persisted value.
+        globalSettings.value = settings
         globalSettingsRepository.update(settings)
     }
 
@@ -138,4 +151,8 @@ class EasyTierViewModel(
     fun disconnect() = viewModelScope.launch { coordinator.stop() }
     fun resetProfiles() = viewModelScope.launch { coordinator.stop(); repository.reset(); selectedId.value = null }
     private fun selectedProfile() = state.value.profiles.firstOrNull { it.id == state.value.selectedProfileId }
+
+    companion object {
+        private const val TAG = "EasyTierSettings"
+    }
 }

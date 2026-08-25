@@ -5,6 +5,7 @@ import androidx.annotation.StringRes
 import cc.ptoe.easytier.compose.R
 import cc.ptoe.easytier.compose.data.EasyTierProfile
 import cc.ptoe.easytier.compose.data.GlobalSettings
+import cc.ptoe.easytier.compose.data.mergeInto
 import java.net.InetAddress
 
 sealed interface ValidationMessage {
@@ -23,30 +24,33 @@ class ProfileValidator(private val nativeParser: NativeConfigParser = EasyTierNa
         profile: EasyTierProfile,
         globalSettings: GlobalSettings = GlobalSettings(),
     ): Map<String, ValidationMessage> = buildMap {
-        if (profile.name.isBlank()) put("name", ValidationMessage.Resource(R.string.error_profile_name_required))
-        if (profile.networkName.isBlank()) put("networkName", ValidationMessage.Resource(R.string.error_network_name_required))
-        if (profile.tldDnsZone.isBlank()) put("tldDnsZone", ValidationMessage.Resource(R.string.error_tld_dns_zone_required))
-        if (!profile.dhcp && !profile.virtualIpv4.isValidIpv4Cidr()) {
+        // Global overrides merge on top of the profile; validation runs on the
+        // effective configuration that would actually be built.
+        val effective = globalSettings.mergeInto(profile)
+        if (effective.name.isBlank()) put("name", ValidationMessage.Resource(R.string.error_profile_name_required))
+        if (effective.networkName.isBlank()) put("networkName", ValidationMessage.Resource(R.string.error_network_name_required))
+        if (effective.tldDnsZone.isBlank()) put("tldDnsZone", ValidationMessage.Resource(R.string.error_tld_dns_zone_required))
+        if (!effective.dhcp && !effective.virtualIpv4.isValidIpv4Cidr()) {
             put("virtualIpv4", ValidationMessage.Resource(R.string.error_ipv4_cidr_required_dhcp_off))
         }
-        profile.virtualIpv6?.takeIf { it.isNotBlank() }?.let {
+        effective.virtualIpv6?.takeIf { it.isNotBlank() }?.let {
             if (!it.isValidIpv6Cidr()) put("virtualIpv6", ValidationMessage.Resource(R.string.error_invalid_ipv6_cidr))
         }
-        profile.ipv6PublicAddrPrefix?.takeIf { it.isNotBlank() }?.let {
+        effective.ipv6PublicAddrPrefix?.takeIf { it.isNotBlank() }?.let {
             if (!it.isValidIpv6Cidr()) put("ipv6PublicAddrPrefix", ValidationMessage.Resource(R.string.error_invalid_ipv6_cidr))
         }
-        validateStringList("listeners", profile.listeners) { it.isValidListenerUrl() }
-        validateStringList("mappedListeners", profile.mappedListeners) { it.isValidListenerUrl() }
-        validateStringList("manualRoutes", profile.manualRoutes) { it.isValidIpv4Cidr() }
-        validateStringList("exitNodes", profile.exitNodes) { it.isValidIp() }
-        validateStringList("stunServers", profile.stunServers)
-        validateStringList("stunServersV6", profile.stunServersV6)
-        validateStringList("tcpWhitelist", profile.tcpWhitelist)
-        validateStringList("udpWhitelist", profile.udpWhitelist)
-        validatePeers(profile)
-        validateProxyNetworks(profile)
-        validatePortForwards(profile)
-        profile.vpnPortal?.let { portal ->
+        validateStringList("listeners", effective.listeners) { it.isValidListenerUrl() }
+        validateStringList("mappedListeners", effective.mappedListeners) { it.isValidListenerUrl() }
+        validateStringList("manualRoutes", effective.manualRoutes) { it.isValidIpv4Cidr() }
+        validateStringList("exitNodes", effective.exitNodes) { it.isValidIp() }
+        validateStringList("stunServers", effective.stunServers)
+        validateStringList("stunServersV6", effective.stunServersV6)
+        validateStringList("tcpWhitelist", effective.tcpWhitelist)
+        validateStringList("udpWhitelist", effective.udpWhitelist)
+        validatePeers(effective)
+        validateProxyNetworks(effective)
+        validatePortForwards(effective)
+        effective.vpnPortal?.let { portal ->
             when {
                 !portal.clientCidr.isValidIpv4Cidr() -> put("vpnPortal", ValidationMessage.Resource(R.string.error_invalid_client_cidr))
                 !portal.clientCidr.isRoutablePortalCidr() -> put(
@@ -56,17 +60,28 @@ class ProfileValidator(private val nativeParser: NativeConfigParser = EasyTierNa
             }
             if (!portal.wireguardListen.isValidSocketAddr()) put("vpnPortal", ValidationMessage.Resource(R.string.error_invalid_wireguard_listen))
         }
-        if (globalSettings.mtu !in 576..9000) {
-            put("globalMtu", ValidationMessage.Resource(R.string.error_mtu_range))
+        effective.socks5Proxy?.takeIf { it.isNotBlank() }?.let {
+            if (!it.isValidSocks5Proxy()) put("socks5Proxy", ValidationMessage.Resource(R.string.error_invalid_socks5_proxy))
         }
-        if (globalSettings.multiThreadCount <= 0) {
-            put("globalMultiThreadCount", ValidationMessage.Resource(R.string.error_thread_count_positive))
+        // Device-local (engine) values of the effective profile.
+        if (effective.mtu !in 576..9000) put("mtu", ValidationMessage.Resource(R.string.error_mtu_range))
+        if (effective.multiThreadCount <= 0) put("multiThreadCount", ValidationMessage.Resource(R.string.error_thread_count_positive))
+        if (effective.foreignRelayBpsLimit < 0) put("foreignRelayBpsLimit", ValidationMessage.Resource(R.string.error_non_negative))
+        if (effective.instanceRecvBpsLimit < 0) put("instanceRecvBpsLimit", ValidationMessage.Resource(R.string.error_non_negative))
+        effective.socketMark?.let {
+            if (it !in 0..0xFFFFFFFFL) put("socketMark", ValidationMessage.Resource(R.string.error_socket_mark_range))
         }
-        if (globalSettings.foreignRelayBpsLimit < 0) {
-            put("globalForeignRelayBpsLimit", ValidationMessage.Resource(R.string.error_non_negative))
+        // Per-field checks for the global overrides themselves (distinct keys so a
+        // bad override is distinguishable from a bad profile value).
+        globalSettings.mtu?.let { if (it !in 576..9000) put("globalMtu", ValidationMessage.Resource(R.string.error_mtu_range)) }
+        globalSettings.multiThreadCount?.let { if (it <= 0) put("globalMultiThreadCount", ValidationMessage.Resource(R.string.error_thread_count_positive)) }
+        globalSettings.foreignRelayBpsLimit?.let { if (it < 0) put("globalForeignRelayBpsLimit", ValidationMessage.Resource(R.string.error_non_negative)) }
+        globalSettings.instanceRecvBpsLimit?.let { if (it < 0) put("globalInstanceRecvBpsLimit", ValidationMessage.Resource(R.string.error_non_negative)) }
+        globalSettings.socketMark?.let {
+            if (it !in 0..0xFFFFFFFFL) put("globalSocketMark", ValidationMessage.Resource(R.string.error_socket_mark_range))
         }
-        if (globalSettings.instanceRecvBpsLimit < 0) {
-            put("globalInstanceRecvBpsLimit", ValidationMessage.Resource(R.string.error_non_negative))
+        globalSettings.socks5Proxy?.takeIf { it.isNotBlank() }?.let {
+            if (!it.isValidSocks5Proxy()) put("globalSocks5Proxy", ValidationMessage.Resource(R.string.error_invalid_socks5_proxy))
         }
         // Final native validation of the generated TOML.
         val toml = TomlConfigBuilder.build(profile, globalSettings)
@@ -198,4 +213,20 @@ private fun String?.isValidListenerUrl(): Boolean {
     val value = this?.trim().orEmpty()
     if (value.isEmpty()) return false
     return value.contains("://")
+}
+
+/**
+ * The core parses `socks5_proxy` as a URL and requires a host and an explicit
+ * port (see CoreInstanceConfig::from_toml). Accept only socks5:// URLs with a
+ * host and a valid 1..65535 port.
+ */
+private fun String?.isValidSocks5Proxy(): Boolean {
+    val value = this?.trim().orEmpty()
+    if (value.isEmpty()) return false
+    return runCatching {
+        val uri = java.net.URI.create(value)
+        uri.scheme.equals("socks5", ignoreCase = true) &&
+            !uri.host.isNullOrEmpty() &&
+            uri.port in 1..65535
+    }.getOrDefault(false)
 }

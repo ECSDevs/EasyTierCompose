@@ -134,6 +134,21 @@ internal fun ProfileEditorScreen(
         }
 
         item {
+            SectionCard(title = stringResource(R.string.editor_socks5_proxy), icon = Icons.Default.Tune) {
+                FormField(
+                    label = stringResource(R.string.editor_socks5_proxy_url),
+                    value = profile.socks5Proxy.orEmpty(),
+                    error = error("socks5Proxy"),
+                ) { v -> update { it.copy(socks5Proxy = v.ifBlank { null }) } }
+                Text(
+                    stringResource(R.string.editor_socks5_proxy_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        item {
             SectionCard(title = stringResource(R.string.editor_vpn_portal), icon = Icons.Default.VpnKey) {
                 val portal = profile.vpnPortal
                 SwitchRow(stringResource(R.string.editor_enable_wireguard_portal), portal != null) { checked ->
@@ -213,6 +228,7 @@ internal fun ProfileEditorScreen(
                 SwitchRow(stringResource(R.string.editor_disable_p2p), profile.disableP2p) { c -> update { it.copy(disableP2p = c) } }
                 SwitchRow(stringResource(R.string.editor_p2p_only), profile.p2pOnly) { c -> update { it.copy(p2pOnly = c) } }
                 SwitchRow(stringResource(R.string.editor_lazy_p2p), profile.lazyP2p) { c -> update { it.copy(lazyP2p = c) } }
+                SwitchRow(stringResource(R.string.editor_need_p2p), profile.needP2p) { c -> update { it.copy(needP2p = c) } }
                 SwitchRow(stringResource(R.string.editor_disable_tcp_hole_punching), profile.disableTcpHolePunching) { c -> update { it.copy(disableTcpHolePunching = c) } }
                 SwitchRow(stringResource(R.string.editor_disable_udp_hole_punching), profile.disableUdpHolePunching) { c -> update { it.copy(disableUdpHolePunching = c) } }
                 SwitchRow(stringResource(R.string.editor_disable_symmetric_hole_punching), profile.disableSymHolePunching) { c -> update { it.copy(disableSymHolePunching = c) } }
@@ -235,6 +251,102 @@ internal fun ProfileEditorScreen(
                 SwitchRow(stringResource(R.string.editor_disable_quic_input), profile.disableQuicInput) { c -> update { it.copy(disableQuicInput = c) } }
                 SwitchRow(stringResource(R.string.editor_disable_relay_quic), profile.disableRelayQuic) { c -> update { it.copy(disableRelayQuic = c) } }
                 SwitchRow(stringResource(R.string.editor_enable_relay_foreign_quic), profile.enableRelayForeignNetworkQuic) { c -> update { it.copy(enableRelayForeignNetworkQuic = c) } }
+            }
+        }
+
+        item {
+            SectionCard(title = stringResource(R.string.settings_device), icon = Icons.Default.Tune) {
+                Text(
+                    stringResource(R.string.settings_engine_description),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                var tunDeviceName by remember(profile.tunDeviceName) { mutableStateOf(profile.tunDeviceName) }
+                var mtuInput by remember(profile.mtu) { mutableStateOf(profile.mtu.toString()) }
+                var threadCountInput by remember(profile.multiThreadCount) { mutableStateOf(profile.multiThreadCount.toString()) }
+                var foreignRelayBpsInput by remember(profile.foreignRelayBpsLimit) {
+                    mutableStateOf(if (profile.foreignRelayBpsLimit >= Long.MAX_VALUE) "" else profile.foreignRelayBpsLimit.toString())
+                }
+                var instanceRecvBpsInput by remember(profile.instanceRecvBpsLimit) {
+                    mutableStateOf(if (profile.instanceRecvBpsLimit >= Long.MAX_VALUE) "" else profile.instanceRecvBpsLimit.toString())
+                }
+                var socketMarkInput by remember(profile.socketMark) { mutableStateOf(profile.socketMark?.toString() ?: "") }
+                fun parseBpsLimit(raw: String): Long? {
+                    val trimmed = raw.trim()
+                    if (trimmed.isEmpty()) return Long.MAX_VALUE
+                    return trimmed.toLongOrNull()?.takeIf { it >= 0 }
+                }
+                val mtuValid = mtuInput.toIntOrNull() in 576..9000
+                val threadCountValid = (threadCountInput.toIntOrNull() ?: 0) > 0
+                val foreignRelayBps = parseBpsLimit(foreignRelayBpsInput)
+                val instanceRecvBps = parseBpsLimit(instanceRecvBpsInput)
+                val socketMarkValid = socketMarkInput.isBlank() ||
+                    socketMarkInput.trim().toLongOrNull()?.let { it in 0..0xFFFFFFFFL } == true
+
+                FormField(stringResource(R.string.settings_tun_device_name), tunDeviceName, null) { v ->
+                    tunDeviceName = v
+                    update { it.copy(tunDeviceName = v) }
+                }
+                FormField(
+                    stringResource(R.string.settings_mtu),
+                    mtuInput,
+                    if (mtuValid) null else stringResource(R.string.error_mtu_range),
+                ) { v ->
+                    mtuInput = v.filter { c -> c.isDigit() }.take(5)
+                    mtuInput.toIntOrNull()?.takeIf { it in 576..9000 }?.let { mtu ->
+                        update { it.copy(mtu = mtu) }
+                    }
+                }
+                SwitchRow(stringResource(R.string.settings_multi_thread), profile.multiThread) { c -> update { it.copy(multiThread = c) } }
+                FormField(
+                    stringResource(R.string.settings_multi_thread_count),
+                    threadCountInput,
+                    if (threadCountValid) null else stringResource(R.string.error_thread_count_positive),
+                ) { v ->
+                    threadCountInput = v.filter { c -> c.isDigit() }.take(3)
+                    threadCountInput.toIntOrNull()?.takeIf { it > 0 }?.let { count ->
+                        update { it.copy(multiThreadCount = count) }
+                    }
+                }
+                FormField(
+                    stringResource(R.string.settings_foreign_relay_bps_limit),
+                    foreignRelayBpsInput,
+                    if (foreignRelayBps != null) null else stringResource(R.string.settings_bps_invalid),
+                ) { v ->
+                    foreignRelayBpsInput = v.filter { c -> c.isDigit() }.take(19)
+                    parseBpsLimit(foreignRelayBpsInput)?.let { limit ->
+                        update { it.copy(foreignRelayBpsLimit = limit) }
+                    }
+                }
+                FormField(
+                    stringResource(R.string.settings_instance_recv_bps_limit),
+                    instanceRecvBpsInput,
+                    if (instanceRecvBps != null) null else stringResource(R.string.settings_bps_invalid),
+                ) { v ->
+                    instanceRecvBpsInput = v.filter { c -> c.isDigit() }.take(19)
+                    parseBpsLimit(instanceRecvBpsInput)?.let { limit ->
+                        update { it.copy(instanceRecvBpsLimit = limit) }
+                    }
+                }
+                FormField(
+                    stringResource(R.string.settings_socket_mark),
+                    socketMarkInput,
+                    if (socketMarkValid) null else stringResource(R.string.settings_socket_mark_invalid),
+                ) { v ->
+                    socketMarkInput = v.filter { c -> c.isDigit() }.take(10)
+                    if (socketMarkInput.isBlank()) {
+                        update { it.copy(socketMark = null) }
+                    } else {
+                        socketMarkInput.trim().toLongOrNull()?.takeIf { it in 0..0xFFFFFFFFL }?.let { mark ->
+                            update { it.copy(socketMark = mark) }
+                        }
+                    }
+                }
+                Text(
+                    stringResource(R.string.settings_socket_mark_description),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
 

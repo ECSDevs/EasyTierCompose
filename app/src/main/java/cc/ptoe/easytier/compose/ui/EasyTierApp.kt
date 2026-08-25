@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -60,6 +61,7 @@ import androidx.annotation.StringRes
 import cc.ptoe.easytier.compose.R
 import cc.ptoe.easytier.compose.data.RuntimeState
 import cc.ptoe.easytier.compose.ui.screens.DashboardScreen
+import cc.ptoe.easytier.compose.ui.screens.GlobalSettingsScreen
 import cc.ptoe.easytier.compose.ui.screens.PeersScreen
 import cc.ptoe.easytier.compose.ui.screens.ProfileEditorScreen
 import cc.ptoe.easytier.compose.ui.screens.ProfilesScreen
@@ -73,6 +75,7 @@ private enum class Destination(@param:StringRes val labelRes: Int, val icon: Ima
     Peers(R.string.nav_peers, Icons.Default.People),
     Settings(R.string.nav_settings, Icons.Default.Settings),
     Editor(R.string.nav_profile, Icons.Default.Edit),
+    GlobalSettings(R.string.settings_global, Icons.Default.Tune),
 }
 
 @Composable
@@ -97,6 +100,13 @@ fun EasyTierApp(
     var lastDraft by remember { mutableStateOf(state.draft) }
     val currentDraft = state.draft
     if (currentDraft != null) lastDraft = currentDraft
+
+    // Global settings cover: shares the editor's enter/exit slide + predictive
+    // back gesture pattern, so returning to Settings feels like the editor.
+    val globalsBackProgress = remember { Animatable(0f) }
+    val globalsAnim = remember { Animatable(0f) }
+    var globalsShown by remember { mutableStateOf(false) }
+    var globalsGestureCommitted by remember { mutableStateOf(false) }
 
     // Drive editor enter/exit slide animation and keep gesture progress in sync.
     LaunchedEffect(destination) {
@@ -126,6 +136,30 @@ fun EasyTierApp(
         }
     }
 
+    // Mirror the editor animation lifecycle for the global settings cover.
+    LaunchedEffect(destination) {
+        if (destination == Destination.GlobalSettings) {
+            globalsBackProgress.snapTo(0f)
+            globalsGestureCommitted = false
+            globalsShown = true
+            globalsAnim.animateTo(1f, tween(durationMillis = 300))
+        } else {
+            if (globalsShown) {
+                if (globalsGestureCommitted) {
+                    globalsAnim.animateTo(0f, tween(durationMillis = 250))
+                    globalsBackProgress.snapTo(0f)
+                } else {
+                    globalsBackProgress.snapTo(0f)
+                    globalsAnim.animateTo(0f, tween(durationMillis = 300))
+                }
+                globalsShown = false
+                globalsGestureCommitted = false
+            } else {
+                globalsBackProgress.snapTo(0f)
+            }
+        }
+    }
+
     PredictiveBackHandler(enabled = destination == Destination.Editor) { progress: Flow<BackEventCompat> ->
         try {
             progress.collect { event -> backProgress.snapTo(event.progress) }
@@ -139,11 +173,27 @@ fun EasyTierApp(
         }
     }
 
+    PredictiveBackHandler(enabled = destination == Destination.GlobalSettings) { progress: Flow<BackEventCompat> ->
+        try {
+            progress.collect { event -> globalsBackProgress.snapTo(event.progress) }
+            // Gesture committed: leave global settings back to Settings.
+            globalsGestureCommitted = true
+            destination = Destination.Settings
+        } catch (e: CancellationException) {
+            // Gesture cancelled: animate back to rest.
+            globalsBackProgress.animateTo(0f, animationSpec = tween(durationMillis = 250))
+        }
+    }
+
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             Box {
-                val tabDestination = if (destination == Destination.Editor) Destination.Profiles else destination
+                val tabDestination = when (destination) {
+                    Destination.Editor -> Destination.Profiles
+                    Destination.GlobalSettings -> Destination.Settings
+                    else -> destination
+                }
                 TopAppBar(title = { Text(stringResource(tabDestination.labelRes)) })
                 if (editorShown) {
                     TopAppBar(
@@ -182,21 +232,49 @@ fun EasyTierApp(
                         },
                     )
                 }
+                if (globalsShown) {
+                    TopAppBar(
+                        modifier = Modifier.graphicsLayer {
+                            val p = globalsAnim.value
+                            val bp = globalsBackProgress.value
+                            val scale = 1f - bp * 0.1f
+                            scaleX = scale
+                            scaleY = scale
+                            alpha = p * (1f - bp * 0.3f)
+                            if (wide) {
+                                translationY = (1f - p) * -size.height
+                                translationX = bp * size.width * 0.35f
+                            } else {
+                                translationX = (1f - p) * size.width + bp * size.width * 0.35f
+                            }
+                        },
+                        title = { Text(stringResource(Destination.GlobalSettings.labelRes)) },
+                        navigationIcon = {
+                            IconButton(onClick = { destination = Destination.Settings }) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
+                            }
+                        },
+                    )
+                }
             }
         },
         bottomBar = {
-            if (!wide && destination != Destination.Editor) {
+            if (!wide && destination != Destination.Editor && destination != Destination.GlobalSettings) {
                 AppNavigationBar(destination) { destination = it }
             }
         },
     ) { padding ->
         Row(Modifier.fillMaxSize().padding(padding)) {
-            if (wide && destination != Destination.Editor) {
+            if (wide && destination != Destination.Editor && destination != Destination.GlobalSettings) {
                 AppNavigationRail(destination) { destination = it }
                 VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
             Box(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 12.dp).widthIn(max = 900.dp)) {
-                val tabDestination = if (destination == Destination.Editor) Destination.Profiles else destination
+                val tabDestination = when (destination) {
+                    Destination.Editor -> Destination.Profiles
+                    Destination.GlobalSettings -> Destination.Settings
+                    else -> destination
+                }
                 val tabOrder = remember {
                     listOf(Destination.Dashboard, Destination.Profiles, Destination.Peers, Destination.Settings)
                 }
@@ -236,10 +314,12 @@ fun EasyTierApp(
                         Destination.Settings -> SettingsScreen(
                             state = state,
                             onTunMode = viewModel::updateTunMode,
-                            onGlobalSettings = viewModel::updateGlobalSettings,
+                            onStartOnBoot = viewModel::updateStartOnBoot,
+                            onOpenGlobalSettings = { destination = Destination.GlobalSettings },
                             reset = viewModel::resetProfiles,
                         )
                         Destination.Editor -> Unit
+                        Destination.GlobalSettings -> Unit
                     }
                 }
 
@@ -278,6 +358,35 @@ fun EasyTierApp(
                         }
                     }
                 }
+
+                // Global settings cover: same entry/exit + predictive-back slide as
+                // the editor, rendered on top of the Settings tab.
+                if (globalsShown) {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.surface)
+                            .graphicsLayer {
+                                val p = globalsAnim.value
+                                val bp = globalsBackProgress.value
+                                val scale = 1f - bp * 0.1f
+                                scaleX = scale
+                                scaleY = scale
+                                alpha = p * (1f - bp * 0.3f)
+                                if (wide) {
+                                    translationY = (1f - p) * -size.height
+                                    translationX = bp * size.width * 0.35f
+                                } else {
+                                    translationX = (1f - p) * size.width + bp * size.width * 0.35f
+                                }
+                            }
+                    ) {
+                        GlobalSettingsScreen(
+                            state = state,
+                            onGlobalSettings = viewModel::updateGlobalSettings,
+                        )
+                    }
+                }
             }
         }
     }
@@ -286,15 +395,17 @@ fun EasyTierApp(
 @Composable
 private fun AppNavigationBar(selected: Destination, select: (Destination) -> Unit) {
     NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
-        Destination.entries.filter { it != Destination.Editor }.forEach { item ->
-            val label = stringResource(item.labelRes)
-            NavigationBarItem(
-                selected = selected == item,
-                onClick = { select(item) },
-                icon = { Icon(item.icon, contentDescription = label) },
-                label = { Text(label) },
-            )
-        }
+        Destination.entries
+            .filter { it != Destination.Editor && it != Destination.GlobalSettings }
+            .forEach { item ->
+                val label = stringResource(item.labelRes)
+                NavigationBarItem(
+                    selected = selected == item,
+                    onClick = { select(item) },
+                    icon = { Icon(item.icon, contentDescription = label) },
+                    label = { Text(label) },
+                )
+            }
     }
 }
 
@@ -302,14 +413,16 @@ private fun AppNavigationBar(selected: Destination, select: (Destination) -> Uni
 private fun AppNavigationRail(selected: Destination, select: (Destination) -> Unit) {
     NavigationRail(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
         Spacer(Modifier.height(16.dp))
-        Destination.entries.filter { it != Destination.Editor }.forEach { item ->
-            val label = stringResource(item.labelRes)
-            NavigationRailItem(
-                selected = selected == item,
-                onClick = { select(item) },
-                icon = { Icon(item.icon, contentDescription = label) },
-                label = { Text(label) },
-            )
-        }
+        Destination.entries
+            .filter { it != Destination.Editor && it != Destination.GlobalSettings }
+            .forEach { item ->
+                val label = stringResource(item.labelRes)
+                NavigationRailItem(
+                    selected = selected == item,
+                    onClick = { select(item) },
+                    icon = { Icon(item.icon, contentDescription = label) },
+                    label = { Text(label) },
+                )
+            }
     }
 }

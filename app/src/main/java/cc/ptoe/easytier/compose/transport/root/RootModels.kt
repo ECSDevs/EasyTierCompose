@@ -14,11 +14,6 @@ data class RootTunSpec(
     // Whether the profile configured a WireGuard VPN portal; tells the root
     // daemon to poll VpnPortalRpc so the app can show portal credentials.
     val wireguardPortal: Boolean = false,
-    // No TUN mode: the daemon runs the EasyTier core without creating easytier0
-    // (no routes/DHCP/setTunFd). Used so the core's sockets use the physical
-    // NIC (via socket_mark in the root process) instead of being hijacked by
-    // VpnService / other proxy TUNs in the app process.
-    val noTun: Boolean = false,
 ) : Parcelable {
     constructor(parcel: Parcel) : this(
         parcel.readString(),
@@ -26,7 +21,6 @@ data class RootTunSpec(
         buildList { parcel.readStringList(this) },
         buildList { parcel.readStringList(this) },
         parcel.readString().orEmpty(),
-        parcel.createBooleanArray()?.getOrNull(0) ?: false,
         parcel.createBooleanArray()?.getOrNull(0) ?: false,
         parcel.createBooleanArray()?.getOrNull(0) ?: false,
     )
@@ -39,7 +33,6 @@ data class RootTunSpec(
         parcel.writeString(devName)
         parcel.writeBooleanArray(booleanArrayOf(magicDns))
         parcel.writeBooleanArray(booleanArrayOf(wireguardPortal))
-        parcel.writeBooleanArray(booleanArrayOf(noTun))
     }
 
     override fun describeContents() = 0

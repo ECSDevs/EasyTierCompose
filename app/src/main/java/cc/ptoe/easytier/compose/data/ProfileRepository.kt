@@ -3,7 +3,6 @@ package cc.ptoe.easytier.compose.data
 import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -87,16 +86,12 @@ class GlobalSettingsRepository(private val context: Context) {
     // Legacy per-field keys, kept read-only to migrate settings written by
     // older app versions. Once `settings_v1` exists they are ignored.
     private val legacyTunDeviceNameKey = stringPreferencesKey("tun_device_name")
-    private val legacyNoTunKey = booleanPreferencesKey("no_tun")
-    private val legacyStartOnBootKey = booleanPreferencesKey("start_on_boot")
 
     val settings: Flow<GlobalSettings> = context.easyTierGlobalSettingsDataStore.data.map { preferences ->
         preferences[settingsKey]?.let { raw ->
             runCatching { json.decodeFromString(GlobalSettings.serializer(), raw) }.getOrNull()
         } ?: GlobalSettings(
-            tunDeviceName = preferences[legacyTunDeviceNameKey] ?: "easytier0",
-            noTun = preferences[legacyNoTunKey] ?: false,
-            startOnBoot = preferences[legacyStartOnBootKey] ?: false,
+            tunDeviceName = preferences[legacyTunDeviceNameKey],
         )
     }
 

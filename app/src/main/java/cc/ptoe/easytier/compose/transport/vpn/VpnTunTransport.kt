@@ -16,10 +16,19 @@ import kotlinx.coroutines.flow.asStateFlow
 
 class VpnTunTransport(
     private val context: Context,
-    private val permissionRequester: VpnPermissionRequester,
+    permissionRequester: VpnPermissionRequester,
 ) : RuntimeTransport {
+    // @Volatile: the requester is swapped at runtime when the app moves from a
+    // background (boot, no-op) to a foreground (MainActivity, consent dialog)
+    // context, so a late start() from the boot receiver must see the latest one.
+    @Volatile private var permissionRequester: VpnPermissionRequester = permissionRequester
     private val mutableStatus = MutableStateFlow(RuntimeStatus.Stopped)
     override val status: StateFlow<RuntimeStatus> = mutableStatus.asStateFlow()
+
+    /** Replaces the permission requester (e.g. swap boot no-op for the activity one). */
+    fun updatePermissionRequester(requester: VpnPermissionRequester) {
+        permissionRequester = requester
+    }
 
     // Guards against establishWhenResolved racing with stop(): once running flips to
     // false, no further startForegroundService intents are posted, so stopService()
@@ -30,13 +39,13 @@ class VpnTunTransport(
     // 2 seconds from the poll loop.
     private var establishedIpv4Cidr: String? = null
     private var establishedRoutes: List<String> = emptyList()
-    // MTU moved to GlobalSettings; cached at start() so the poll loop's
+    // MTU lives on the (effective) profile; cached at start() so the poll loop's
     // establishWhenResolved() calls can reuse it without threading settings through.
     private var activeMtu: Int = DEFAULT_MTU
 
     override suspend fun start(profile: EasyTierProfile, toml: String, globalSettings: GlobalSettings): RuntimeStatus {
         running = true
-        activeMtu = globalSettings.mtu
+        activeMtu = profile.mtu
         establishedIpv4Cidr = null
         establishedRoutes = emptyList()
         val ipv4Cidr = profile.virtualIpv4?.takeIf { !profile.dhcp }

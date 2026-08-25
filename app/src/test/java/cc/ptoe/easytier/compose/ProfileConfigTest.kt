@@ -14,6 +14,7 @@ import cc.ptoe.easytier.compose.data.ProxyNetwork
 import cc.ptoe.easytier.compose.data.SecureMode
 import cc.ptoe.easytier.compose.data.TunMode
 import cc.ptoe.easytier.compose.data.VpnPortal
+import cc.ptoe.easytier.compose.data.mergeInto
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -82,37 +83,33 @@ class ProfileConfigTest {
     }
 
     @Test
-    fun `global settings override tun device name and no tun`() {
-        val settings = GlobalSettings(tunDeviceName = "mytun", noTun = true)
+    fun `global settings override tun device name`() {
+        val settings = GlobalSettings(tunDeviceName = "mytun")
         val toml = TomlConfigBuilder.build(profile(), settings)
         assertTrue(toml.contains("dev_name = \"mytun\""))
-        assertTrue(toml.contains("no_tun = true"))
     }
 
     @Test
-    fun `no tun mode forces bind_device false for vpn service`() {
-        val settings = GlobalSettings(noTun = true)
-        val toml = TomlConfigBuilder.build(profile(mode = TunMode.VPN_SERVICE), settings)
+    fun `no tun mode forces bind_device false`() {
+        val toml = TomlConfigBuilder.build(profile(mode = TunMode.NO_TUN))
+        assertTrue(toml.contains("no_tun = true"))
         assertTrue(toml.contains("bind_device = false"))
         assertFalse(toml.contains("bind_device = true"))
     }
 
     @Test
-    fun `no tun mode forces bind_device false for root tun`() {
-        val settings = GlobalSettings(noTun = true)
-        val toml = TomlConfigBuilder.build(profile(mode = TunMode.ROOT_TUN), settings)
+    fun `root tun mode applies fwmark`() {
+        val toml = TomlConfigBuilder.build(profile(mode = TunMode.ROOT_TUN))
         assertTrue(toml.contains("bind_device = false"))
-        // Root mode always applies the fwmark (the core runs in the root daemon),
-        // so under no_tun its traffic still uses the physical NIC.
+        // Root mode always applies the fwmark (the core runs in the root daemon).
         assertTrue(toml.contains("socket_mark ="))
     }
 
     @Test
-    fun `no tun root tun spec disables magic dns and flags no tun`() {
-        val settings = GlobalSettings(noTun = true)
-        val spec = TomlConfigBuilder.rootTunSpec(profile(mode = TunMode.ROOT_TUN), settings)
-        assertTrue(spec.noTun)
-        assertFalse(spec.magicDns)
+    fun `no tun mode emits no socket mark and disables magic dns`() {
+        val toml = TomlConfigBuilder.build(profile(mode = TunMode.NO_TUN))
+        assertFalse(toml.contains("socket_mark ="))
+        assertTrue(toml.contains("accept_dns = false"))
     }
 
     @Test
@@ -123,15 +120,13 @@ class ProfileConfigTest {
 
     @Test
     fun `no tun mode forces accept_dns false even when magic dns enabled`() {
-        val settings = GlobalSettings(noTun = true)
-        val toml = TomlConfigBuilder.build(profile().copy(enableMagicDns = true), settings)
+        val toml = TomlConfigBuilder.build(profile(mode = TunMode.NO_TUN).copy(enableMagicDns = true))
         assertTrue(toml.contains("accept_dns = false"))
     }
 
     @Test
     fun `no tun mode preserves accept_dns false when magic dns disabled`() {
-        val settings = GlobalSettings(noTun = true)
-        val toml = TomlConfigBuilder.build(profile().copy(enableMagicDns = false), settings)
+        val toml = TomlConfigBuilder.build(profile(mode = TunMode.NO_TUN).copy(enableMagicDns = false))
         assertTrue(toml.contains("accept_dns = false"))
     }
 
@@ -274,5 +269,116 @@ class ProfileConfigTest {
         assertTrue(toml.contains("[secure_mode]"))
         assertTrue(toml.contains("enabled = true"))
         assertTrue(toml.contains("local_private_key = \"k1\""))
+    }
+
+    @Test
+    fun `toml builder emits socks5 proxy when set`() {
+        val toml = TomlConfigBuilder.build(profile().copy(socks5Proxy = "socks5://0.0.0.0:1080"))
+        assertTrue(toml.contains("socks5_proxy = \"socks5://0.0.0.0:1080\""))
+    }
+
+    @Test
+    fun `toml builder omits socks5 proxy when blank`() {
+        val toml = TomlConfigBuilder.build(profile().copy(socks5Proxy = null))
+        assertFalse(toml.contains("socks5_proxy"))
+    }
+
+    @Test
+    fun `toml builder emits need p2p flag`() {
+        val toml = TomlConfigBuilder.build(profile().copy(needP2p = true))
+        assertTrue(toml.contains("need_p2p = true"))
+    }
+
+    @Test
+    fun `toml builder applies custom socket mark in root tun`() {
+        val settings = GlobalSettings(socketMark = 66)
+        val toml = TomlConfigBuilder.build(profile(mode = TunMode.ROOT_TUN), settings)
+        assertTrue(toml.contains("socket_mark = 66"))
+    }
+
+    @Test
+    fun `toml builder keeps default socket mark when unset`() {
+        val toml = TomlConfigBuilder.build(profile(mode = TunMode.ROOT_TUN))
+        assertTrue(toml.contains("socket_mark = ${TomlConfigBuilder.ROOT_TUN_SOCKET_MARK}"))
+    }
+
+    @Test
+    fun `validator accepts valid socks5 proxy and socket mark`() {
+        val full = profile().copy(socks5Proxy = "socks5://0.0.0.0:1080", needP2p = true)
+        val settings = GlobalSettings(socketMark = 0x20000)
+        val errors = ProfileValidator(NativeConfigParser { null }).validate(full, settings)
+        assertTrue(errors.toString(), errors.isEmpty())
+    }
+
+    @Test
+    fun `validator blocks invalid socks5 proxy`() {
+        listOf(
+            "http://0.0.0.0:1080",   // wrong scheme
+            "socks5://0.0.0.0",      // missing port
+            "socks5://:1080",        // missing host
+            "not-a-url",
+        ).forEach { proxy ->
+            val errors = ProfileValidator(NativeConfigParser { null })
+                .validate(profile().copy(socks5Proxy = proxy))
+            assertTrue("expected $proxy to be rejected, errors: $errors", errors.containsKey("socks5Proxy"))
+        }
+    }
+
+    @Test
+    fun `validator blocks out of range socket mark`() {
+        val settings = GlobalSettings(socketMark = -1)
+        val errors = ProfileValidator(NativeConfigParser { null }).validate(profile(), settings)
+        assertTrue(errors.containsKey("globalSocketMark"))
+    }
+
+    @Test
+    fun `profile carries its own device-local values without overrides`() {
+        val toml = TomlConfigBuilder.build(profile().copy(mtu = 1500, tunDeviceName = "mydev", multiThreadCount = 4))
+        assertTrue(toml.contains("mtu = 1500"))
+        assertTrue(toml.contains("dev_name = \"mydev\""))
+        assertTrue(toml.contains("multi_thread_count = 4"))
+    }
+
+    @Test
+    fun `global override wins over profile device value`() {
+        val settings = GlobalSettings(mtu = 1400)
+        val toml = TomlConfigBuilder.build(profile().copy(mtu = 1500), settings)
+        assertTrue(toml.contains("mtu = 1400"))
+        assertFalse(toml.contains("mtu = 1500"))
+    }
+
+    @Test
+    fun `empty global settings keep profile network values`() {
+        val toml = TomlConfigBuilder.build(profile().copy(networkName = "my-net"))
+        assertTrue(toml.contains("network_name = \"my-net\""))
+    }
+
+    @Test
+    fun `global override replaces profile network name`() {
+        val settings = GlobalSettings(networkName = "override-net")
+        val toml = TomlConfigBuilder.build(profile(), settings)
+        assertTrue(toml.contains("network_name = \"override-net\""))
+    }
+
+    @Test
+    fun `merge into profile is idempotent for empty overrides`() {
+        val p = profile()
+        val merged = GlobalSettings().mergeInto(p)
+        assertEquals(p, merged)
+    }
+
+    @Test
+    fun `merge into applies boolean and enum overrides`() {
+        val settings = GlobalSettings(
+            enableMagicDns = true,
+            disableP2p = true,
+            dataCompressAlgo = CompressionAlgo.Zstd,
+            encryptionAlgorithm = EncryptionAlgorithm.ChaCha20,
+        )
+        val merged = settings.mergeInto(profile())
+        assertTrue(merged.enableMagicDns)
+        assertTrue(merged.disableP2p)
+        assertEquals(CompressionAlgo.Zstd, merged.dataCompressAlgo)
+        assertEquals(EncryptionAlgorithm.ChaCha20, merged.encryptionAlgorithm)
     }
 }

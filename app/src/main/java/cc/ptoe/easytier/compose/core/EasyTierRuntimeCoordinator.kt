@@ -8,6 +8,7 @@ import cc.ptoe.easytier.compose.data.GlobalSettings
 import cc.ptoe.easytier.compose.data.RuntimeState
 import cc.ptoe.easytier.compose.data.RuntimeStatus
 import cc.ptoe.easytier.compose.data.TunMode
+import cc.ptoe.easytier.compose.data.mergeInto
 import cc.ptoe.easytier.compose.transport.root.RootTunTransport
 import cc.ptoe.easytier.compose.transport.vpn.VpnPermissionRequester
 import cc.ptoe.easytier.compose.transport.vpn.VpnTunTransport
@@ -28,7 +29,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-class EasyTierRuntimeCoordinator(
+class EasyTierRuntimeCoordinator private constructor(
     private val context: Context,
     permissionRequester: VpnPermissionRequester,
 ) {
@@ -40,36 +41,55 @@ class EasyTierRuntimeCoordinator(
     val status: StateFlow<RuntimeStatus> = mutableStatus.asStateFlow()
     private var activeProfile: EasyTierProfile? = null
     private var pollJob: Job? = null
-    // Tracks whether the active session took the no-TUN path (globalSettings.noTun = true),
-    // so stopLocked() can release the EasyTier instance without touching VpnService/RootTun.
-    private var noTunActive: Boolean = false
+
+    /**
+     * Swaps the VPN permission requester. BootCompletedReceiver binds a no-op requester
+     * (background context can't launch the consent dialog); when MainActivity comes up it
+     * swaps in the real activity-backed requester so a foreground connect() can prompt.
+     */
+    fun updatePermissionRequester(requester: VpnPermissionRequester) {
+        vpn.updatePermissionRequester(requester)
+    }
+
+    companion object {
+        // Process-wide singleton: BootCompletedReceiver and MainActivity must share one
+        // coordinator. Two instances would each run their own poll loops and transports
+        // against the same global native instance / root daemon, so a stop() from the
+        // activity would be overridden by the boot receiver's still-polling loop, leaving
+        // the VPN service running with no way to disconnect it.
+        @Volatile private var instance: EasyTierRuntimeCoordinator? = null
+
+        @Synchronized
+        fun getInstance(context: Context, permissionRequester: VpnPermissionRequester): EasyTierRuntimeCoordinator {
+            val current = instance
+            if (current != null) {
+                // Adopt the caller's requester so a boot-created singleton can prompt
+                // once the activity is foregrounded.
+                current.updatePermissionRequester(permissionRequester)
+                return current
+            }
+            return EasyTierRuntimeCoordinator(context.applicationContext, permissionRequester).also { instance = it }
+        }
+    }
 
     suspend fun start(profile: EasyTierProfile, globalSettings: GlobalSettings = GlobalSettings()): RuntimeStatus = mutex.withLock {
         // Auto-fill hostname from the Android device name when the profile leaves it blank,
         // so peers see a recognizable identity without forcing the user to configure it.
-        val effectiveProfile = profile.withDeviceHostnameIfBlank(context)
+        // Global overrides are merged on top afterwards; build/validate merge again
+        // internally, which is idempotent.
+        val effectiveProfile = globalSettings.mergeInto(profile.withDeviceHostnameIfBlank(context))
         val errors = ProfileValidator().validate(effectiveProfile, globalSettings)
         if (errors.isNotEmpty()) return@withLock failure(effectiveProfile, errors.values.first().resolve(context))
         val toml = TomlConfigBuilder.build(effectiveProfile, globalSettings)
         stopLocked()
         activeProfile = effectiveProfile
-        noTunActive = globalSettings.noTun
         mutableStatus.value = RuntimeStatus(RuntimeState.STARTING, effectiveProfile.id, effectiveProfile.tunMode, null, null, null)
-        return@withLock when {
-            // Root mode under no_tun: run the core in the root daemon (no TUN
-            // device) so its sockets use the physical NIC via socket_mark,
-            // instead of being routed through VpnService / other proxy TUNs
-            // as they would be from the app process.
-            noTunActive && effectiveProfile.tunMode == TunMode.ROOT_TUN ->
-                startRoot(effectiveProfile, toml, globalSettings)
-            // no_tun + VPN_SERVICE: EasyTier core skips TUN creation; the app
-            // must match by not establishing VpnService either, otherwise we'd
-            // still bring up a system VPN interface despite no_tun = true.
-            noTunActive -> startNoTun(effectiveProfile, toml)
-            else -> when (effectiveProfile.tunMode) {
-                TunMode.VPN_SERVICE -> startVpn(effectiveProfile, toml, globalSettings)
-                TunMode.ROOT_TUN -> startRoot(effectiveProfile, toml, globalSettings)
-            }
+        return@withLock when (effectiveProfile.tunMode) {
+            // No TUN mode: run the EasyTier core with no TUN device at all, in
+            // the app process. VpnService and RootTun are both skipped.
+            TunMode.NO_TUN -> startNoTun(effectiveProfile, toml)
+            TunMode.VPN_SERVICE -> startVpn(effectiveProfile, toml, globalSettings)
+            TunMode.ROOT_TUN -> startRoot(effectiveProfile, toml, globalSettings)
         }
     }
 
@@ -148,13 +168,10 @@ class EasyTierRuntimeCoordinator(
             return@withLock
         }
         activeProfile = profile
-        noTunActive = globalSettings.noTun
         val info = raw.networkInfo(profileId)
-        when {
-            // In-process no_tun adoption only applies to VPN_SERVICE sessions;
-            // ROOT_TUN runs the core in the root daemon (adopted via
-            // attachOrphanRoot instead), even under no_tun.
-            noTunActive && profile.tunMode == TunMode.VPN_SERVICE -> {
+        when (profile.tunMode) {
+            // In-process no_tun adoption only applies to NO_TUN sessions.
+            TunMode.NO_TUN -> {
                 mutableStatus.value = RuntimeStatus(
                     state = RuntimeState.RUNNING,
                     profileId = profile.id,
@@ -168,7 +185,7 @@ class EasyTierRuntimeCoordinator(
                 )
                 pollNoTun()
             }
-            profile.tunMode == TunMode.VPN_SERVICE -> {
+            TunMode.VPN_SERVICE -> {
                 val status = vpn.adopt(profile, info?.virtualIpv4, info?.routes.orEmpty())
                 mutableStatus.value = status
                 if (status.state == RuntimeState.RUNNING || status.state == RuntimeState.STARTING) pollVpn()
@@ -177,7 +194,6 @@ class EasyTierRuntimeCoordinator(
                 // ROOT_TUN should not reach here (EasyTier runs in the root daemon
                 // process, not in-process). Clear state so attachOrphanRoot can handle it.
                 activeProfile = null
-                noTunActive = false
             }
         }
     }
@@ -239,18 +255,14 @@ class EasyTierRuntimeCoordinator(
         pollJob?.cancelAndJoin()
         pollJob = null
         val profile = activeProfile
-        // no_tun sessions started in-process (VPN_SERVICE tun mode) release the
-        // EasyTier instance here; ROOT_TUN sessions always live in the root
-        // daemon (including no_tun) and are stopped via root.stop() below.
-        if (noTunActive && profile?.tunMode != TunMode.ROOT_TUN) {
-            mutableStatus.value = mutableStatus.value.copy(state = RuntimeState.STOPPING)
-            runCatching { EasyTierJni.retainNetworkInstance(null) }
-            noTunActive = false
-            activeProfile = null
-            return RuntimeStatus.Stopped.also { mutableStatus.value = it }
-        }
-        noTunActive = false
         when (profile?.tunMode) {
+            // no_tun sessions started in-process (NO_TUN mode) release the
+            // EasyTier instance here; ROOT_TUN sessions always live in the root
+            // daemon and are stopped via root.stop() below.
+            TunMode.NO_TUN -> {
+                mutableStatus.value = mutableStatus.value.copy(state = RuntimeState.STOPPING)
+                runCatching { EasyTierJni.retainNetworkInstance(null) }
+            }
             TunMode.VPN_SERVICE -> {
                 mutableStatus.value = mutableStatus.value.copy(state = RuntimeState.STOPPING)
                 vpn.stop()

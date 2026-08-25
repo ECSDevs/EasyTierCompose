@@ -60,7 +60,10 @@ class MainActivity : ComponentActivity() {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T = EasyTierViewModel(
             ProfileRepository(activity.applicationContext),
-            EasyTierRuntimeCoordinator(activity.applicationContext, permissionRequester),
+            // Process-wide singleton: if BootCompletedReceiver already created the
+            // coordinator (auto-start), reuse it and swap in the activity-backed
+            // permission requester so a foreground connect() can prompt for consent.
+            EasyTierRuntimeCoordinator.getInstance(activity.applicationContext, permissionRequester),
             GlobalSettingsRepository(activity.applicationContext),
         ) as T
     }

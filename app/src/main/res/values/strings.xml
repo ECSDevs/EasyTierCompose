@@ -96,22 +96,35 @@
     <string name="profiles_removed_from_device">This profile will be removed from this device.</string>
     <string name="profiles_card_description">Profile %1$s</string>
 
-    <string name="settings_global_overrides">Global overrides</string>
+    <string name="settings_global">Global settings</string>
+    <string name="settings_global_subtitle">Override per-profile options. Every field here is optional — turn on Override to replace the profile value for all profiles.</string>
+    <string name="settings_tun">TUN</string>
     <string name="settings_tun_mode">TUN Mode</string>
-    <string name="settings_tun_root_no_tun">Root - core runs in root daemon via physical NIC</string>
+    <string name="global_override">Override</string>
+    <string name="global_override_active">Override active</string>
+    <string name="global_profile_summary">Profile: %1$s</string>
+    <string name="global_value_not_set">Not set</string>
+    <string name="global_value_set">Set</string>
+    <string name="global_value_on">On</string>
+    <string name="global_value_off">Off</string>
+    <string name="global_entries_summary">%1$d entries</string>
+    <string name="settings_device">Device</string>
     <string name="settings_tun_root">Root</string>
     <string name="settings_tun_vpn_service">VPN Service</string>
+    <string name="settings_tun_no_tun">No TUN</string>
     <string name="settings_tun_device_name">TUN device name</string>
-    <string name="settings_no_tun">No TUN</string>
     <string name="settings_start_on_boot">Start on boot</string>
     <string name="settings_engine">Engine</string>
-    <string name="settings_engine_description">Device-local options shared by all profiles. They apply to every EasyTier network and do not affect other devices.</string>
+    <string name="settings_engine_description">Device-local options for this profile. They do not affect other devices and can be overridden globally.</string>
     <string name="settings_mtu">MTU</string>
     <string name="settings_multi_thread">Multi-thread</string>
     <string name="settings_multi_thread_count">Multi-thread count</string>
     <string name="settings_foreign_relay_bps_limit">Foreign relay bps limit</string>
     <string name="settings_instance_recv_bps_limit">Instance recv bps limit</string>
     <string name="settings_bps_invalid">Must be a non-negative number (blank = no limit)</string>
+    <string name="settings_socket_mark">Socket mark (fwmark)</string>
+    <string name="settings_socket_mark_description">Applied to EasyTier sockets in Root mode to bypass VPN policy routing. Blank keeps the default (0x20000). Requires root.</string>
+    <string name="settings_socket_mark_invalid">Must be between 0 and 4294967295 (blank = default)</string>
     <string name="settings_notifications">Notifications</string>
     <string name="settings_notifications_subtitle">Allow for VPN status</string>
     <string name="settings_version">Version %1$s</string>
@@ -143,6 +156,9 @@
     <string name="editor_auto">Auto</string>
     <string name="editor_ipv6_public_prefix">IPv6 public prefix (CIDR)</string>
     <string name="editor_port_forwards">Port Forwards</string>
+    <string name="editor_socks5_proxy">SOCKS5 Proxy</string>
+    <string name="editor_socks5_proxy_hint">e.g. socks5://0.0.0.0:1080</string>
+    <string name="editor_socks5_proxy_url">SOCKS5 proxy URL</string>
     <string name="editor_vpn_portal">VPN Portal (WireGuard)</string>
     <string name="editor_enable_wireguard_portal">Enable WireGuard portal</string>
     <string name="editor_client_cidr">Client CIDR</string>
@@ -174,6 +190,7 @@
     <string name="editor_disable_p2p">Disable P2P</string>
     <string name="editor_p2p_only">P2P only</string>
     <string name="editor_lazy_p2p">Lazy P2P</string>
+    <string name="editor_need_p2p">Need P2P</string>
     <string name="editor_disable_tcp_hole_punching">Disable TCP hole punching</string>
     <string name="editor_disable_udp_hole_punching">Disable UDP hole punching</string>
     <string name="editor_disable_symmetric_hole_punching">Disable symmetric hole punching</string>
@@ -231,6 +248,8 @@
     <string name="error_invalid_client_cidr">Invalid client CIDR</string>
     <string name="error_portal_cidr_not_routable">Client CIDR must be a routable subnet (no loopback/link-local/multicast, prefix 8-28)</string>
     <string name="error_invalid_wireguard_listen">Invalid WireGuard listen address</string>
+    <string name="error_invalid_socks5_proxy">Invalid SOCKS5 proxy URL (expected socks5://host:port)</string>
+    <string name="error_socket_mark_range">Socket mark must be between 0 and 4294967295</string>
     <string name="error_mtu_range">MTU must be between 576 and 9000</string>
     <string name="error_thread_count_positive">Thread count must be greater than 0</string>
     <string name="error_non_negative">Cannot be negative</string>
