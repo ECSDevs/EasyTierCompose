@@ -60,10 +60,15 @@ jobs:
           KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: ./gradlew :app:assembleRelease
 
-      - name: Rename APK
+      - name: Rename APKs
+        # ABI split APKs are produced per-abi (app-<abi>-release.apk),
+        # e.g. app-arm64-v8a-release.apk / app-armeabi-v7a-release.apk.
         run: |
-          mv app/build/outputs/apk/release/app-release.apk \
-             app/build/outputs/apk/release/EasyTier-${{ steps.version.outputs.version }}-${{ steps.version.outputs.short_sha }}.apk
+          cd app/build/outputs/apk/release
+          for apk in *.apk; do
+            abi=$(printf '%s' "$apk" | sed -E 's/^app-//; s/-release\.apk$//')
+            mv "$apk" "EasyTier-${{ steps.version.outputs.version }}-${abi}-${{ steps.version.outputs.short_sha }}.apk"
+          done
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
