@@ -35,6 +35,15 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Accept Android SDK licenses and install NDK
+        # The runner only pre-accepts licenses for pre-installed SDK packages.
+        # The project pins ndkVersion 30.0.16138531 (and needs cmake 4.1.2 /
+        # platform 37), so accept all licenses and pre-install the pinned NDK
+        # before Gradle runs, otherwise AGP fails with LicenceNotAcceptedException.
+        run: |
+          yes | sudo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          yes | sudo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;30.0.16138531" > /dev/null
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
