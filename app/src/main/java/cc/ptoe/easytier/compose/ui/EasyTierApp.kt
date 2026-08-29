@@ -5,8 +5,11 @@ package cc.ptoe.easytier.compose.ui
 import androidx.activity.BackEventCompat
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -113,6 +116,9 @@ fun EasyTierApp(
         if (destination == Destination.Editor) {
             backProgress.snapTo(0f)
             gestureCommitted = false
+            // Reset to the resting position before sliding in, so the full
+            // enter animation always plays even if a previous exit was cut short.
+            editorAnim.snapTo(0f)
             editorShown = true
             editorAnim.animateTo(1f, tween(durationMillis = 300))
         } else {
@@ -259,7 +265,13 @@ fun EasyTierApp(
             }
         },
         bottomBar = {
-            if (!wide && destination != Destination.Editor && destination != Destination.GlobalSettings) {
+            // Fade/slide the navigation bar in and out instead of toggling it
+            // instantly, so entering the editor does not make it "flash away".
+            AnimatedVisibility(
+                visible = !wide && destination != Destination.Editor && destination != Destination.GlobalSettings,
+                enter = fadeIn(tween(150)) + slideInVertically(tween(200)) { it },
+                exit = fadeOut(tween(150)) + slideOutVertically(tween(200)) { it },
+            ) {
                 AppNavigationBar(destination) { destination = it }
             }
         },
@@ -306,6 +318,7 @@ fun EasyTierApp(
                         Destination.Profiles -> ProfilesScreen(
                             state = state,
                             add = { viewModel.beginCreate(); destination = Destination.Editor },
+                            importProfile = { imported -> viewModel.beginEdit(imported); destination = Destination.Editor },
                             edit = { viewModel.beginEdit(it); destination = Destination.Editor },
                             select = { viewModel.selectProfile(it.id) },
                             delete = viewModel::delete,

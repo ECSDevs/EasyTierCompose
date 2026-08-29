@@ -41,6 +41,13 @@ object TomlConfigBuilder {
             appendTomlArray("stun_servers_v6", p.stunServersV6)
             appendTomlArray("tcp_whitelist", p.tcpWhitelist)
             appendTomlArray("udp_whitelist", p.udpWhitelist)
+            // These root-level scalars must stay above the first [[...]] array
+            // header: TOML attaches a bare key to whatever table (or array
+            // element) is currently open, so emitting them after [[port_forward]]
+            // / [[acl.acl_v1.chains.rules]] would nest them in the wrong table.
+            p.socks5Proxy?.trim()?.takeIf { it.isNotEmpty() }?.let { appendTomlString("socks5_proxy", it) }
+            p.credentialFile?.trim()?.takeIf { it.isNotEmpty() }
+                ?.let { appendTomlString("credential_file", it) }
             if (p.ipv6PublicAddrProvider) append("ipv6_public_addr_provider = true\n")
             if (p.ipv6PublicAddrAuto) append("ipv6_public_addr_auto = true\n")
             p.ipv6PublicAddrPrefix?.trim()?.takeIf { it.isNotEmpty() }?.let { appendTomlString("ipv6_public_addr_prefix", it) }
@@ -71,8 +78,6 @@ object TomlConfigBuilder {
                 appendTomlString("dst_addr", forward.dstAddr.trim())
                 appendTomlString("proto", forward.proto.trim().lowercase())
             }
-
-            p.socks5Proxy?.trim()?.takeIf { it.isNotEmpty() }?.let { appendTomlString("socks5_proxy", it) }
 
             p.vpnPortal?.let { portal ->
                 append("\n[vpn_portal_config]\n")
@@ -152,8 +157,6 @@ object TomlConfigBuilder {
                 }
             }
 
-            p.credentialFile?.trim()?.takeIf { it.isNotEmpty() }
-                ?.let { appendTomlString("credential_file", it) }
             p.managedCredentials.forEach { credential ->
                 val id = credential.credentialId.trim()
                 if (id.isEmpty()) return@forEach

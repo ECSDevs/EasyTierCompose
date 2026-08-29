@@ -169,6 +169,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.tomlj)
     implementation(libs.libsu.core)
     implementation(libs.kotlin.parcelize.runtime)
     implementation(libs.libsu.service)
