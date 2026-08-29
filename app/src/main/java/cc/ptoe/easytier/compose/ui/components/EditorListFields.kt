@@ -34,9 +34,11 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import cc.ptoe.easytier.compose.R
+import cc.ptoe.easytier.compose.data.ManagedCredential
 import cc.ptoe.easytier.compose.data.Peer
 import cc.ptoe.easytier.compose.data.PortForward
 import cc.ptoe.easytier.compose.data.ProxyNetwork
+import cc.ptoe.easytier.compose.data.VpnPortalClient
 
 @Composable
 internal fun PeerListField(peers: List<Peer>, error: String?, onChange: (List<Peer>) -> Unit) {
@@ -64,7 +66,9 @@ internal fun PeerListField(peers: List<Peer>, error: String?, onChange: (List<Pe
             shape = MaterialTheme.shapes.medium,
             modifier = Modifier.fillMaxWidth(),
         )
-        Box(modifier = Modifier.matchParentSize().clickable { open = true })
+        Box(modifier = Modifier
+            .matchParentSize()
+            .clickable { open = true })
     }
     if (open) PeerListEditorDialog(peers, { open = false }, onChange)
 }
@@ -212,7 +216,9 @@ internal fun ProxyNetworkListField(networks: List<ProxyNetwork>, error: String?,
             shape = MaterialTheme.shapes.medium,
             modifier = Modifier.fillMaxWidth(),
         )
-        Box(modifier = Modifier.matchParentSize().clickable { open = true })
+        Box(modifier = Modifier
+            .matchParentSize()
+            .clickable { open = true })
     }
     if (open) ProxyNetworkEditorDialog(networks, { open = false }, onChange)
 }
@@ -358,6 +364,434 @@ internal fun ProxyNetworkEditorDialog(networks: List<ProxyNetwork>, onDismiss: (
 }
 
 @Composable
+internal fun VpnPortalClientListField(
+    clients: List<VpnPortalClient>,
+    error: String?,
+    onChange: (List<VpnPortalClient>) -> Unit
+) {
+    var open by remember { mutableStateOf(false) }
+    val label = stringResource(R.string.list_vpn_portal_clients)
+    val fieldValue = when {
+        clients.isEmpty() -> ""
+        clients.size == 1 -> clients.first().name
+        else -> pluralStringResource(R.plurals.portal_client_count, clients.size, clients.size)
+    }
+    Box(Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = fieldValue,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label) },
+            supportingText = if (error == null) null else {
+                { Text(error) }
+            },
+            isError = error != null,
+            trailingIcon = {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = stringResource(R.string.content_edit_field, label),
+                )
+            },
+            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Box(modifier = Modifier
+            .matchParentSize()
+            .clickable { open = true })
+    }
+    if (open) VpnPortalClientEditorDialog(clients, { open = false }, onChange)
+}
+
+@Composable
+internal fun VpnPortalClientEditorDialog(
+    clients: List<VpnPortalClient>,
+    onDismiss: () -> Unit,
+    onChange: (List<VpnPortalClient>) -> Unit
+) {
+    var draft by remember(clients) { mutableStateOf(clients) }
+    var editingIndex by remember { mutableStateOf<Int?>(null) }
+    var name by remember { mutableStateOf("") }
+    var virtualIp by remember { mutableStateOf("") }
+    var groups by remember { mutableStateOf("") }
+
+    fun reset() {
+        editingIndex = null
+        name = ""
+        virtualIp = ""
+        groups = ""
+    }
+
+    fun commit() {
+        val trimmedName = name.trim()
+        if (trimmedName.isEmpty() || virtualIp.isBlank()) {
+            reset()
+            return
+        }
+        val client = VpnPortalClient(
+            name = trimmedName,
+            virtualIp = virtualIp.trim(),
+            groups = groups.split(",", " ").map(String::trim).filter(String::isNotEmpty),
+        )
+        draft = when (editingIndex) {
+            null -> draft + client
+            else -> draft.mapIndexed { i, existing -> if (i == editingIndex) client else existing }
+        }
+        reset()
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (draft != clients) onChange(draft); onDismiss() },
+        title = { Text(stringResource(R.string.list_vpn_portal_clients)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    stringResource(if (editingIndex != null) R.string.list_edit_portal_client else R.string.list_add_portal_client),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text(stringResource(R.string.list_portal_client_name)) },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = virtualIp,
+                    onValueChange = { virtualIp = it },
+                    label = { Text(stringResource(R.string.list_portal_client_virtual_ip)) },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = groups,
+                    onValueChange = { groups = it },
+                    label = { Text(stringResource(R.string.list_portal_client_groups)) },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (editingIndex != null) {
+                        TextButton(onClick = { reset() }) { Text(stringResource(R.string.action_cancel)) }
+                    }
+                    Button(
+                        onClick = { commit() },
+                        enabled = name.trim().isNotEmpty() && virtualIp.isNotBlank(),
+                        shape = MaterialTheme.shapes.medium,
+                    ) {
+                        Icon(
+                            if (editingIndex == null) Icons.Default.Add else Icons.Default.Check,
+                            null,
+                            Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.size(8.dp))
+                        Text(stringResource(if (editingIndex == null) R.string.action_add else R.string.action_update))
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                if (draft.isEmpty()) {
+                    Text(
+                        stringResource(R.string.list_no_portal_clients),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        draft.forEachIndexed { index, client ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        stringResource(
+                                            R.string.list_portal_client_summary,
+                                            client.name,
+                                            client.virtualIp
+                                        ),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                    client.groups.takeIf { it.isNotEmpty() }?.let {
+                                        Text(
+                                            it.joinToString(", "),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                                IconButton(onClick = {
+                                    editingIndex = index
+                                    name = client.name
+                                    virtualIp = client.virtualIp
+                                    groups = client.groups.joinToString(",")
+                                }) {
+                                    Icon(
+                                        Icons.Default.Edit,
+                                        contentDescription = stringResource(R.string.content_edit_peer)
+                                    )
+                                }
+                                IconButton(onClick = {
+                                    draft = draft.filterIndexed { i, _ -> i != index }
+                                }) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = stringResource(R.string.content_delete_peer)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { if (draft != clients) onChange(draft); onDismiss() },
+                shape = MaterialTheme.shapes.medium,
+            ) { Text(stringResource(R.string.action_done)) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } },
+    )
+}
+
+@Composable
+internal fun ManagedCredentialListField(
+    credentials: List<ManagedCredential>,
+    error: String?,
+    onChange: (List<ManagedCredential>) -> Unit
+) {
+    var open by remember { mutableStateOf(false) }
+    val label = stringResource(R.string.list_managed_credentials)
+    val fieldValue = when {
+        credentials.isEmpty() -> ""
+        credentials.size == 1 -> credentials.first().credentialId
+        else -> pluralStringResource(
+            R.plurals.managed_credential_count,
+            credentials.size,
+            credentials.size
+        )
+    }
+    Box(Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = fieldValue,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label) },
+            supportingText = if (error == null) null else {
+                { Text(error) }
+            },
+            isError = error != null,
+            trailingIcon = {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = stringResource(R.string.content_edit_field, label),
+                )
+            },
+            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Box(modifier = Modifier
+            .matchParentSize()
+            .clickable { open = true })
+    }
+    if (open) ManagedCredentialEditorDialog(credentials, { open = false }, onChange)
+}
+
+@Composable
+internal fun ManagedCredentialEditorDialog(
+    credentials: List<ManagedCredential>,
+    onDismiss: () -> Unit,
+    onChange: (List<ManagedCredential>) -> Unit
+) {
+    var draft by remember(credentials) { mutableStateOf(credentials) }
+    var editingIndex by remember { mutableStateOf<Int?>(null) }
+    var credentialId by remember { mutableStateOf("") }
+    var credentialSecret by remember { mutableStateOf("") }
+    var groups by remember { mutableStateOf("") }
+    var allowRelay by remember { mutableStateOf(false) }
+    var allowedProxyCidrs by remember { mutableStateOf("") }
+    var expiryUnix by remember { mutableStateOf("") }
+    var reusable by remember { mutableStateOf(true) }
+
+    fun reset() {
+        editingIndex = null
+        credentialId = ""
+        credentialSecret = ""
+        groups = ""
+        allowRelay = false
+        allowedProxyCidrs = ""
+        expiryUnix = ""
+        reusable = true
+    }
+
+    fun commit() {
+        val id = credentialId.trim()
+        val expiry = expiryUnix.trim().toLongOrNull() ?: 0L
+        if (id.isEmpty() || credentialSecret.isBlank() || expiry <= 0) {
+            reset()
+            return
+        }
+        val credential = ManagedCredential(
+            credentialId = id,
+            credentialSecret = credentialSecret,
+            groups = groups.split(",", " ").map(String::trim).filter(String::isNotEmpty),
+            allowRelay = allowRelay,
+            allowedProxyCidrs = allowedProxyCidrs.split(",", " ").map(String::trim)
+                .filter(String::isNotEmpty),
+            expiryUnix = expiry,
+            reusable = reusable,
+        )
+        draft = when (editingIndex) {
+            null -> draft + credential
+            else -> draft.mapIndexed { i, existing -> if (i == editingIndex) credential else existing }
+        }
+        reset()
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (draft != credentials) onChange(draft); onDismiss() },
+        title = { Text(stringResource(R.string.list_managed_credentials)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    stringResource(if (editingIndex != null) R.string.list_edit_credential else R.string.list_add_credential),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                OutlinedTextField(
+                    value = credentialId,
+                    onValueChange = { credentialId = it },
+                    label = { Text(stringResource(R.string.list_credential_id)) },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = credentialSecret,
+                    onValueChange = { credentialSecret = it },
+                    label = { Text(stringResource(R.string.list_credential_secret)) },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = groups,
+                    onValueChange = { groups = it },
+                    label = { Text(stringResource(R.string.list_credential_groups)) },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = allowedProxyCidrs,
+                    onValueChange = { allowedProxyCidrs = it },
+                    label = { Text(stringResource(R.string.list_credential_allowed_proxy_cidrs)) },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = expiryUnix,
+                    onValueChange = { expiryUnix = it },
+                    label = { Text(stringResource(R.string.list_credential_expiry)) },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                SwitchRow(
+                    stringResource(R.string.list_credential_allow_relay),
+                    allowRelay
+                ) { allowRelay = it }
+                SwitchRow(stringResource(R.string.list_credential_reusable), reusable) {
+                    reusable = it
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (editingIndex != null) {
+                        TextButton(onClick = { reset() }) { Text(stringResource(R.string.action_cancel)) }
+                    }
+                    Button(
+                        onClick = { commit() },
+                        enabled = credentialId.trim()
+                            .isNotEmpty() && credentialSecret.isNotBlank() && (expiryUnix.trim()
+                            .toLongOrNull() ?: 0L) > 0,
+                        shape = MaterialTheme.shapes.medium,
+                    ) {
+                        Icon(
+                            if (editingIndex == null) Icons.Default.Add else Icons.Default.Check,
+                            null,
+                            Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.size(8.dp))
+                        Text(stringResource(if (editingIndex == null) R.string.action_add else R.string.action_update))
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                if (draft.isEmpty()) {
+                    Text(
+                        stringResource(R.string.list_no_managed_credentials),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        draft.forEachIndexed { index, credential ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    stringResource(
+                                        R.string.list_credential_summary,
+                                        credential.credentialId,
+                                        credential.expiryUnix
+                                    ),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                IconButton(onClick = {
+                                    editingIndex = index
+                                    credentialId = credential.credentialId
+                                    credentialSecret = credential.credentialSecret
+                                    groups = credential.groups.joinToString(",")
+                                    allowRelay = credential.allowRelay
+                                    allowedProxyCidrs =
+                                        credential.allowedProxyCidrs.joinToString(",")
+                                    expiryUnix = credential.expiryUnix.toString()
+                                    reusable = credential.reusable
+                                }) {
+                                    Icon(
+                                        Icons.Default.Edit,
+                                        contentDescription = stringResource(R.string.content_edit_forward)
+                                    )
+                                }
+                                IconButton(onClick = {
+                                    draft = draft.filterIndexed { i, _ -> i != index }
+                                }) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = stringResource(R.string.content_delete_forward)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { if (draft != credentials) onChange(draft); onDismiss() },
+                shape = MaterialTheme.shapes.medium,
+            ) { Text(stringResource(R.string.action_done)) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } },
+    )
+}
+
+@Composable
 internal fun PortForwardListField(forwards: List<PortForward>, error: String?, onChange: (List<PortForward>) -> Unit) {
     var open by remember { mutableStateOf(false) }
     val label = stringResource(R.string.list_port_forwards)
@@ -383,7 +817,9 @@ internal fun PortForwardListField(forwards: List<PortForward>, error: String?, o
             shape = MaterialTheme.shapes.medium,
             modifier = Modifier.fillMaxWidth(),
         )
-        Box(modifier = Modifier.matchParentSize().clickable { open = true })
+        Box(modifier = Modifier
+            .matchParentSize()
+            .clickable { open = true })
     }
     if (open) PortForwardEditorDialog(forwards, { open = false }, onChange)
 }

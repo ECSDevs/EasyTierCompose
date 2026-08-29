@@ -2,18 +2,28 @@ package cc.ptoe.easytier.compose
 
 import cc.ptoe.easytier.compose.core.NativeConfigParser
 import cc.ptoe.easytier.compose.core.ProfileValidator
-import cc.ptoe.easytier.compose.core.ValidationMessage
 import cc.ptoe.easytier.compose.core.TomlConfigBuilder
+import cc.ptoe.easytier.compose.core.ValidationMessage
+import cc.ptoe.easytier.compose.data.Acl
+import cc.ptoe.easytier.compose.data.AclAction
+import cc.ptoe.easytier.compose.data.AclChain
+import cc.ptoe.easytier.compose.data.AclChainType
+import cc.ptoe.easytier.compose.data.AclGroup
+import cc.ptoe.easytier.compose.data.AclGroupDeclare
+import cc.ptoe.easytier.compose.data.AclProtocol
+import cc.ptoe.easytier.compose.data.AclRule
 import cc.ptoe.easytier.compose.data.CompressionAlgo
 import cc.ptoe.easytier.compose.data.EasyTierProfile
 import cc.ptoe.easytier.compose.data.EncryptionAlgorithm
 import cc.ptoe.easytier.compose.data.GlobalSettings
+import cc.ptoe.easytier.compose.data.ManagedCredential
 import cc.ptoe.easytier.compose.data.Peer
 import cc.ptoe.easytier.compose.data.PortForward
 import cc.ptoe.easytier.compose.data.ProxyNetwork
 import cc.ptoe.easytier.compose.data.SecureMode
 import cc.ptoe.easytier.compose.data.TunMode
 import cc.ptoe.easytier.compose.data.VpnPortal
+import cc.ptoe.easytier.compose.data.VpnPortalClient
 import cc.ptoe.easytier.compose.data.mergeInto
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -164,7 +174,10 @@ class ProfileConfigTest {
             hostname = "node-1",
             virtualIpv6 = "fd00::1/64",
             portForwards = listOf(PortForward(bindAddr = "0.0.0.0:8080", dstAddr = "10.0.0.1:80", proto = "tcp")),
-            vpnPortal = VpnPortal(clientCidr = "10.99.0.0/24", wireguardListen = "0.0.0.0:51820"),
+            vpnPortal = VpnPortal(
+                wireguardListen = "0.0.0.0:51820",
+                clients = listOf(VpnPortalClient(name = "alice", virtualIp = "10.99.0.10")),
+            ),
             stunServers = listOf("stun://stun.l.google.com:19302"),
             dataCompressAlgo = CompressionAlgo.Zstd,
             encryptionAlgorithm = EncryptionAlgorithm.ChaCha20,
@@ -182,7 +195,10 @@ class ProfileConfigTest {
     fun `validator blocks invalid port forward and vpn portal`() {
         val invalid = profile().copy(
             portForwards = listOf(PortForward(bindAddr = "bad", dstAddr = "10.0.0.1:80", proto = "tcp")),
-            vpnPortal = VpnPortal(clientCidr = "not-a-cidr", wireguardListen = "0.0.0.0:51820"),
+            vpnPortal = VpnPortal(
+                wireguardListen = "0.0.0.0:51820",
+                clients = listOf(VpnPortalClient(name = "", virtualIp = "not-an-ip")),
+            ),
         )
         val errors = ProfileValidator(NativeConfigParser { null }).validate(invalid)
         assertTrue(errors.containsKey("portForwards"))
@@ -190,20 +206,62 @@ class ProfileConfigTest {
     }
 
     @Test
-    fun `validator blocks non-routable vpn portal client cidr`() {
-        listOf(
-            "127.0.0.1/32",   // loopback: reply packets die on peers' lo
-            "169.254.10.0/24", // link-local
-            "224.0.0.0/24",   // multicast
-            "0.0.0.0/0",      // unspecified
-            "10.99.0.0/30",   // prefix too small for client addresses
-        ).forEach { cidr ->
-            val invalid = profile().copy(
-                vpnPortal = VpnPortal(clientCidr = cidr, wireguardListen = "0.0.0.0:51820"),
-            )
-            val errors = ProfileValidator(NativeConfigParser { null }).validate(invalid)
-            assertTrue("expected $cidr to be rejected, errors: $errors", errors.containsKey("vpnPortal"))
-        }
+    fun `validator blocks invalid and duplicate portal clients`() {
+        val invalidIps = ProfileValidator(NativeConfigParser { null }).validate(
+            profile().copy(
+                vpnPortal = VpnPortal(
+                    clients = listOf(
+                        VpnPortalClient(
+                            name = "a",
+                            virtualIp = "10.0.0.1/24"
+                        )
+                    )
+                )
+            ),
+        )
+        assertTrue(invalidIps.containsKey("vpnPortal"))
+
+        val blankName = ProfileValidator(NativeConfigParser { null }).validate(
+            profile().copy(
+                vpnPortal = VpnPortal(
+                    clients = listOf(
+                        VpnPortalClient(
+                            name = "  ",
+                            virtualIp = "10.0.0.1"
+                        )
+                    )
+                )
+            ),
+        )
+        assertTrue(blankName.containsKey("vpnPortal"))
+
+        val duplicateName = ProfileValidator(NativeConfigParser { null }).validate(
+            profile().copy(
+                vpnPortal = VpnPortal(
+                    clients = listOf(
+                        VpnPortalClient(
+                            name = "a",
+                            virtualIp = "10.0.0.1"
+                        ), VpnPortalClient(name = "a", virtualIp = "10.0.0.2")
+                    )
+                )
+            ),
+        )
+        assertTrue(duplicateName.containsKey("vpnPortal"))
+
+        val duplicateIp = ProfileValidator(NativeConfigParser { null }).validate(
+            profile().copy(
+                vpnPortal = VpnPortal(
+                    clients = listOf(
+                        VpnPortalClient(
+                            name = "a",
+                            virtualIp = "10.0.0.1"
+                        ), VpnPortalClient(name = "b", virtualIp = "10.0.0.1")
+                    )
+                )
+            ),
+        )
+        assertTrue(duplicateIp.containsKey("vpnPortal"))
     }
 
     @Test
@@ -253,13 +311,29 @@ class ProfileConfigTest {
     fun `toml builder emits port forward and vpn portal sections`() {
         val p = profile().copy(
             portForwards = listOf(PortForward(bindAddr = "0.0.0.0:8080", dstAddr = "10.0.0.1:80", proto = "tcp")),
-            vpnPortal = VpnPortal(clientCidr = "10.99.0.0/24", wireguardListen = "0.0.0.0:51820"),
+            vpnPortal = VpnPortal(
+                wireguardListen = "0.0.0.0:51820",
+                wireguardPrivateKey = "wg-key",
+                clients = listOf(
+                    VpnPortalClient(
+                        name = "alice",
+                        virtualIp = "10.99.0.10",
+                        groups = listOf("staff")
+                    )
+                ),
+            ),
         )
         val toml = TomlConfigBuilder.build(p)
         assertTrue(toml.contains("[[port_forward]]"))
         assertTrue(toml.contains("bind_addr = \"0.0.0.0:8080\""))
         assertTrue(toml.contains("[vpn_portal_config]"))
-        assertTrue(toml.contains("client_cidr = \"10.99.0.0/24\""))
+        assertTrue(toml.contains("wireguard_listen = \"0.0.0.0:51820\""))
+        assertTrue(toml.contains("wireguard_private_key = \"wg-key\""))
+        assertTrue(toml.contains("[[vpn_portal_config.clients]]"))
+        assertTrue(toml.contains("name = \"alice\""))
+        assertTrue(toml.contains("virtual_ip = \"10.99.0.10\""))
+        assertTrue(toml.contains("groups = [\"staff\"]"))
+        assertFalse(toml.contains("client_cidr"))
     }
 
     @Test
@@ -380,5 +454,192 @@ class ProfileConfigTest {
         assertTrue(merged.disableP2p)
         assertEquals(CompressionAlgo.Zstd, merged.dataCompressAlgo)
         assertEquals(EncryptionAlgorithm.ChaCha20, merged.encryptionAlgorithm)
+    }
+
+    @Test
+    fun `toml builder emits tcp stun servers`() {
+        val toml =
+            TomlConfigBuilder.build(profile().copy(tcpStunServers = listOf("tcp-stun.example.com:3478")))
+        assertTrue(toml.contains("tcp_stun_servers = [\"tcp-stun.example.com:3478\"]"))
+    }
+
+    @Test
+    fun `global settings override tcp stun servers`() {
+        val toml = TomlConfigBuilder.build(
+            profile().copy(tcpStunServers = listOf("a")),
+            GlobalSettings(tcpStunServers = listOf("tcp-stun.example.com:3478")),
+        )
+        assertTrue(toml.contains("tcp_stun_servers = [\"tcp-stun.example.com:3478\"]"))
+        assertFalse(toml.contains("tcp_stun_servers = [\"a\"]"))
+    }
+
+    @Test
+    fun `toml builder emits acl sections`() {
+        val p = profile().copy(
+            acl = Acl(
+                chains = listOf(
+                    AclChain(
+                        name = "subnet_proxy_protect",
+                        chainType = AclChainType.Forward,
+                        defaultAction = AclAction.Drop,
+                        rules = listOf(
+                            AclRule(
+                                name = "allow_my_devices",
+                                priority = 1000,
+                                action = AclAction.Allow,
+                                protocol = AclProtocol.Any,
+                                sourceIps = listOf("10.172.192.2/32"),
+                            ),
+                        ),
+                    ),
+                ),
+                group = AclGroup(
+                    declares = listOf(AclGroupDeclare(groupName = "staff", groupSecret = "pw")),
+                    members = listOf("admin"),
+                ),
+            ),
+        )
+        val toml = TomlConfigBuilder.build(p)
+        assertTrue(toml.contains("[acl.acl_v1]"))
+        assertTrue(toml.contains("[[acl.acl_v1.chains]]"))
+        assertTrue(toml.contains("name = \"subnet_proxy_protect\""))
+        assertTrue(toml.contains("chain_type = 3"))
+        assertTrue(toml.contains("default_action = 2"))
+        assertTrue(toml.contains("[[acl.acl_v1.chains.rules]]"))
+        assertTrue(toml.contains("name = \"allow_my_devices\""))
+        assertTrue(toml.contains("priority = 1000"))
+        assertTrue(toml.contains("action = 1"))
+        assertTrue(toml.contains("protocol = 5"))
+        assertTrue(toml.contains("source_ips = [\"10.172.192.2/32\"]"))
+        assertTrue(toml.contains("[acl.acl_v1.group]"))
+        assertTrue(toml.contains("members = [\"admin\"]"))
+        assertTrue(toml.contains("[[acl.acl_v1.group.declares]]"))
+        assertTrue(toml.contains("group_name = \"staff\""))
+    }
+
+    @Test
+    fun `validator accepts valid acl`() {
+        val full = profile().copy(
+            acl = Acl(
+                chains = listOf(
+                    AclChain(
+                        name = "chain-a",
+                        chainType = AclChainType.Outbound,
+                        rules = listOf(AclRule(name = "rule-a", action = AclAction.Drop)),
+                    ),
+                ),
+                group = AclGroup(
+                    declares = listOf(
+                        AclGroupDeclare(
+                            groupName = "g",
+                            groupSecret = "s"
+                        )
+                    )
+                ),
+            ),
+        )
+        val errors = ProfileValidator(NativeConfigParser { null }).validate(full)
+        assertTrue(errors.toString(), errors.isEmpty())
+    }
+
+    @Test
+    fun `validator blocks malformed acl`() {
+        // Blank chain name
+        var errors = ProfileValidator(NativeConfigParser { null }).validate(
+            profile().copy(acl = Acl(chains = listOf(AclChain(name = " ")))),
+        )
+        assertTrue(errors.containsKey("acl"))
+        // Blank rule name
+        errors = ProfileValidator(NativeConfigParser { null }).validate(
+            profile().copy(
+                acl = Acl(
+                    chains = listOf(
+                        AclChain(
+                            name = "c",
+                            rules = listOf(AclRule(name = ""))
+                        )
+                    )
+                )
+            ),
+        )
+        assertTrue(errors.containsKey("acl"))
+        // Blank group declaration name
+        errors = ProfileValidator(NativeConfigParser { null }).validate(
+            profile().copy(acl = Acl(group = AclGroup(declares = listOf(AclGroupDeclare(groupName = ""))))),
+        )
+        assertTrue(errors.containsKey("acl"))
+        // Duplicate group declaration names
+        errors = ProfileValidator(NativeConfigParser { null }).validate(
+            profile().copy(
+                acl = Acl(
+                    group = AclGroup(
+                        declares = listOf(
+                            AclGroupDeclare(groupName = "g"),
+                            AclGroupDeclare(groupName = "g")
+                        )
+                    )
+                ),
+            ),
+        )
+        assertTrue(errors.containsKey("acl"))
+    }
+
+    @Test
+    fun `toml builder emits managed credentials and credential file`() {
+        val p = profile().copy(
+            credentialFile = "/data/cred.key",
+            managedCredentials = listOf(
+                ManagedCredential(
+                    credentialId = "managed-a",
+                    credentialSecret = "secret",
+                    groups = listOf("ops"),
+                    allowRelay = true,
+                    allowedProxyCidrs = listOf("10.0.0.0/24"),
+                    expiryUnix = 2_000_000_000,
+                    reusable = false,
+                ),
+            ),
+        )
+        val toml = TomlConfigBuilder.build(p)
+        assertTrue(toml.contains("credential_file = \"/data/cred.key\""))
+        assertTrue(toml.contains("[[managed_credentials]]"))
+        assertTrue(toml.contains("credential_id = \"managed-a\""))
+        assertTrue(toml.contains("credential_secret = \"secret\""))
+        assertTrue(toml.contains("groups = [\"ops\"]"))
+        assertTrue(toml.contains("allow_relay = true"))
+        assertTrue(toml.contains("allowed_proxy_cidrs = [\"10.0.0.0/24\"]"))
+        assertTrue(toml.contains("expiry_unix = 2000000000"))
+        assertTrue(toml.contains("reusable = false"))
+    }
+
+    @Test
+    fun `validator accepts valid managed credentials`() {
+        val full = profile().copy(
+            managedCredentials = listOf(
+                ManagedCredential(
+                    credentialId = "managed-a",
+                    credentialSecret = "secret",
+                    expiryUnix = 2_000_000_000,
+                ),
+            ),
+        )
+        val errors = ProfileValidator(NativeConfigParser { null }).validate(full)
+        assertTrue(errors.toString(), errors.isEmpty())
+    }
+
+    @Test
+    fun `validator blocks invalid managed credentials`() {
+        val invalid = profile().copy(
+            managedCredentials = listOf(
+                ManagedCredential(
+                    credentialId = "",
+                    credentialSecret = "",
+                    expiryUnix = 0,
+                    allowedProxyCidrs = listOf("bad")
+                ),
+            ),
+        )
+        val errors = ProfileValidator(NativeConfigParser { null }).validate(invalid)
+        assertTrue(errors.containsKey("managedCredentials"))
     }
 }

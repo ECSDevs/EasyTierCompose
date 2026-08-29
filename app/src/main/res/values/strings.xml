@@ -35,6 +35,12 @@
     <string name="content_delete_network">Delete network</string>
     <string name="content_edit_forward">Edit forward</string>
     <string name="content_delete_forward">Delete forward</string>
+    <string name="content_edit_chain">Edit chain</string>
+    <string name="content_delete_chain">Delete chain</string>
+    <string name="content_edit_group">Edit group</string>
+    <string name="content_delete_group">Delete group</string>
+    <string name="content_edit_rule">Edit rule</string>
+    <string name="content_delete_rule">Delete rule</string>
     <string name="transition_tab">tab</string>
 
     <string name="list_new_entry">Add new entry</string>
@@ -161,7 +167,7 @@
     <string name="editor_socks5_proxy_url">SOCKS5 proxy URL</string>
     <string name="editor_vpn_portal">VPN Portal (WireGuard)</string>
     <string name="editor_enable_wireguard_portal">Enable WireGuard portal</string>
-    <string name="editor_client_cidr">Client CIDR</string>
+    <string name="editor_wireguard_private_key">WireGuard private key</string>
     <string name="editor_wireguard_listen">WireGuard listen</string>
     <string name="editor_secure_mode">Secure Mode</string>
     <string name="editor_enable_secure_mode">Enable secure mode</string>
@@ -169,10 +175,15 @@
     <string name="editor_local_public_key">Local public key</string>
     <string name="editor_stun_whitelists">STUN &amp; Whitelists</string>
     <string name="editor_stun_servers">STUN servers</string>
+    <string name="editor_stun_servers_tcp">STUN servers (TCP)</string>
     <string name="editor_stun_servers_ipv6">STUN servers (IPv6)</string>
     <string name="editor_tcp_whitelist">TCP whitelist</string>
     <string name="editor_udp_whitelist">UDP whitelist</string>
     <string name="editor_relay_network_whitelist">Relay network whitelist</string>
+    <string name="editor_acl">Access Control (ACL)</string>
+    <string name="editor_managed_credentials">Managed Credentials</string>
+    <string name="editor_credential_file">Credential file (path)</string>
+    <string name="editor_credential_file_hint">Optional path to a credential key file</string>
     <string name="editor_flags_general">Flags &#8212; General</string>
     <string name="editor_default_protocol">Default protocol</string>
     <string name="editor_enable_encryption">Enable encryption</string>
@@ -240,14 +251,120 @@
         <item quantity="other">%1$d forwards</item>
     </plurals>
 
+    <string name="list_vpn_portal_clients">Portal clients</string>
+    <string name="list_add_portal_client">Add portal client</string>
+    <string name="list_edit_portal_client">Edit portal client</string>
+    <string name="list_portal_client_name">Client name</string>
+    <string name="list_portal_client_virtual_ip">Virtual IP</string>
+    <string name="list_portal_client_groups">Groups (comma separated)</string>
+    <string name="list_no_portal_clients">No portal clients yet.</string>
+    <string name="list_portal_client_summary">%1$s → %2$s</string>
+    <plurals name="portal_client_count">
+        <item quantity="one">%1$d client</item>
+        <item quantity="other">%1$d clients</item>
+    </plurals>
+
+    <string name="list_acl_chains">ACL chains</string>
+    <string name="list_add_chain">Add chain</string>
+    <string name="list_edit_chain">Edit chain</string>
+    <string name="list_chain_name">Chain name</string>
+    <string name="list_chain_type">Chain type</string>
+    <string name="list_chain_default_action">Default action</string>
+    <string name="list_chain_description">Description</string>
+    <string name="list_chain_enabled">Enabled</string>
+    <string name="list_no_chains">No ACL chains yet.</string>
+    <string name="list_chain_summary">%1$s (%2$s, %3$d rules)</string>
+    <plurals name="acl_chain_count">
+        <item quantity="one">%1$d chain</item>
+        <item quantity="other">%1$d chains</item>
+    </plurals>
+
+    <string name="list_rules">Rules</string>
+    <string name="list_add_rule">Add rule</string>
+    <string name="list_edit_rule">Edit rule</string>
+    <string name="list_rule_name">Rule name</string>
+    <string name="list_rule_description">Description</string>
+    <string name="list_rule_priority">Priority</string>
+    <string name="list_rule_enabled">Enabled</string>
+    <string name="list_rule_action">Action</string>
+    <string name="list_rule_protocol">Protocol</string>
+    <string name="list_rule_ports">Ports</string>
+    <string name="list_rule_source_ips">Source IPs</string>
+    <string name="list_rule_destination_ips">Destination IPs</string>
+    <string name="list_rule_source_ports">Source ports</string>
+    <string name="list_rule_source_groups">Source groups</string>
+    <string name="list_rule_destination_groups">Destination groups</string>
+    <string name="list_rule_rate_limit">Rate limit (pps, 0 = none)</string>
+    <string name="list_rule_burst_limit">Burst limit</string>
+    <string name="list_rule_stateful">Stateful</string>
+    <string name="list_no_rules">No rules yet.</string>
+    <string name="list_rule_summary">%1$s (%2$s)</string>
+    <plurals name="acl_rule_count">
+        <item quantity="one">%1$d rule</item>
+        <item quantity="other">%1$d rules</item>
+    </plurals>
+
+    <string name="list_acl_group">ACL group</string>
+    <string name="list_acl_group_declares">Group declarations</string>
+    <string name="list_add_group_declare">Add group declaration</string>
+    <string name="list_edit_group_declare">Edit group declaration</string>
+    <string name="list_group_name">Group name</string>
+    <string name="list_group_secret">Group secret</string>
+    <string name="list_no_group_declares">No group declarations yet.</string>
+    <string name="list_group_declare_summary">%1$s</string>
+    <string name="list_acl_members">Group members</string>
+    <string name="list_no_members">No group members yet.</string>
+    <plurals name="acl_group_declare_count">
+        <item quantity="one">%1$d declaration</item>
+        <item quantity="other">%1$d declarations</item>
+    </plurals>
+
+    <string name="list_managed_credentials">Managed credentials</string>
+    <string name="list_add_credential">Add credential</string>
+    <string name="list_edit_credential">Edit credential</string>
+    <string name="list_credential_id">Credential ID</string>
+    <string name="list_credential_secret">Credential secret</string>
+    <string name="list_credential_groups">Groups (comma separated)</string>
+    <string name="list_credential_allow_relay">Allow relay</string>
+    <string name="list_credential_allowed_proxy_cidrs">Allowed proxy CIDRs</string>
+    <string name="list_credential_expiry">Expiry (unix seconds)</string>
+    <string name="list_credential_reusable">Reusable</string>
+    <string name="list_no_managed_credentials">No managed credentials yet.</string>
+    <string name="list_credential_summary">%1$s (expiry %2$d)</string>
+    <plurals name="managed_credential_count">
+        <item quantity="one">%1$d credential</item>
+        <item quantity="other">%1$d credentials</item>
+    </plurals>
+
+    <string name="choice_chain_inbound">Inbound</string>
+    <string name="choice_chain_outbound">Outbound</string>
+    <string name="choice_chain_forward">Forward</string>
+    <string name="choice_action_allow">Allow</string>
+    <string name="choice_action_drop">Drop</string>
+    <string name="choice_protocol_tcp">TCP</string>
+    <string name="choice_protocol_udp">UDP</string>
+    <string name="choice_protocol_icmp">ICMP</string>
+    <string name="choice_protocol_icmpv6">ICMPv6</string>
+    <string name="choice_protocol_any">Any</string>
+
     <string name="error_profile_name_required">Profile name is required</string>
     <string name="error_network_name_required">Network name is required</string>
     <string name="error_tld_dns_zone_required">TLD DNS zone is required</string>
     <string name="error_ipv4_cidr_required_dhcp_off">A valid IPv4 CIDR is required when DHCP is off</string>
     <string name="error_invalid_ipv6_cidr">Invalid IPv6 CIDR</string>
-    <string name="error_invalid_client_cidr">Invalid client CIDR</string>
-    <string name="error_portal_cidr_not_routable">Client CIDR must be a routable subnet (no loopback/link-local/multicast, prefix 8-28)</string>
     <string name="error_invalid_wireguard_listen">Invalid WireGuard listen address</string>
+    <string name="error_portal_client_name_required">Every portal client needs a name</string>
+    <string name="error_portal_client_invalid_ip">Every portal client needs a valid IPv4 address</string>
+    <string name="error_portal_client_duplicate_name">Portal client names must be unique</string>
+    <string name="error_portal_client_duplicate_ip">Portal client IPs must be unique</string>
+    <string name="error_acl_chain_name_required">Every ACL chain needs a name</string>
+    <string name="error_acl_rule_name_required">Every ACL rule needs a name</string>
+    <string name="error_acl_group_name_required">Every ACL group declaration needs a group name</string>
+    <string name="error_acl_group_duplicate">ACL group names must be unique</string>
+    <string name="error_credential_id_required">Credential ID is required</string>
+    <string name="error_credential_secret_required">Credential secret is required</string>
+    <string name="error_credential_expiry">Credential expiry must be a future unix timestamp</string>
+    <string name="error_credential_proxy_cidrs_invalid">One or more allowed proxy CIDRs are invalid</string>
     <string name="error_invalid_socks5_proxy">Invalid SOCKS5 proxy URL (expected socks5://host:port)</string>
     <string name="error_socket_mark_range">Socket mark must be between 0 and 4294967295</string>
     <string name="error_mtu_range">MTU must be between 576 and 9000</string>

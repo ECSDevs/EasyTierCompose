@@ -44,20 +44,38 @@ data class PortForward(
 )
 
 @Serializable
+data class VpnPortalClient(
+    val name: String,
+    val virtualIp: String,
+    val groups: List<String> = emptyList(),
+)
+
+/**
+ * WireGuard VPN portal. The updated EasyTier-Core schema is multi-client:
+ * each client is declared explicitly with its own virtual IP (no more
+ * `client_cidr` auto-allocation, which the core now rejects).
+ */
+@Serializable
 data class VpnPortal(
-    val clientCidr: String,
-    val wireguardListen: String,
+    val wireguardListen: String = "0.0.0.0:11011",
+    val wireguardPrivateKey: String? = null,
+    val clients: List<VpnPortalClient> = emptyList(),
 ) {
     companion object {
         /**
-         * Generates a portal with safe defaults: a random /24 inside the
-         * CGNAT range 100.64.0.0/10 as the client CIDR (routable inside the
-         * mesh, avoids loopback/link-local and common LAN collisions) and
-         * the standard EasyTier WireGuard portal listen address.
+         * Generates a portal with safe defaults: the standard EasyTier
+         * WireGuard listen address and a single "default" client whose IP sits
+         * inside the CGNAT range 100.64.0.0/10 (routable inside the mesh,
+         * avoids loopback/link-local and common LAN collisions).
          */
         fun generateDefault(random: kotlin.random.Random = kotlin.random.Random.Default): VpnPortal = VpnPortal(
-            clientCidr = "100.${random.nextInt(64, 128)}.${random.nextInt(0, 256)}.0/24",
             wireguardListen = "0.0.0.0:11011",
+            clients = listOf(
+                VpnPortalClient(
+                    name = "default",
+                    virtualIp = "100.${random.nextInt(64, 128)}.${random.nextInt(0, 256)}.2",
+                ),
+            ),
         )
     }
 }
@@ -67,6 +85,107 @@ data class SecureMode(
     val enabled: Boolean = false,
     val localPrivateKey: String? = null,
     val localPublicKey: String? = null,
+)
+
+// --- Network ACL (acl_v1) -------------------------------------------------
+// Mirrors easytier-proto acl.proto. Enums carry the numeric proto value used
+// when serializing to TOML (matching the core's own TOML fixtures).
+
+@Serializable
+enum class AclChainType(val value: Int) {
+    Inbound(1),
+    Outbound(2),
+    Forward(3),
+    ;
+
+    companion object {
+        fun fromValue(value: Int): AclChainType? = entries.firstOrNull { it.value == value }
+    }
+}
+
+@Serializable
+enum class AclAction(val value: Int) {
+    Allow(1),
+    Drop(2),
+    ;
+
+    companion object {
+        fun fromValue(value: Int): AclAction? = entries.firstOrNull { it.value == value }
+    }
+}
+
+@Serializable
+enum class AclProtocol(val value: Int) {
+    TCP(1),
+    UDP(2),
+    ICMP(3),
+    ICMPv6(4),
+    Any(5),
+    ;
+
+    companion object {
+        fun fromValue(value: Int): AclProtocol? = entries.firstOrNull { it.value == value }
+    }
+}
+
+@Serializable
+data class AclRule(
+    val name: String = "",
+    val description: String = "",
+    val priority: Int = 0,
+    val enabled: Boolean = true,
+    val protocol: AclProtocol = AclProtocol.Any,
+    val ports: List<String> = emptyList(),
+    val sourceIps: List<String> = emptyList(),
+    val destinationIps: List<String> = emptyList(),
+    val sourcePorts: List<String> = emptyList(),
+    val action: AclAction = AclAction.Allow,
+    val rateLimit: Int = 0,
+    val burstLimit: Int = 0,
+    val stateful: Boolean = false,
+    val sourceGroups: List<String> = emptyList(),
+    val destinationGroups: List<String> = emptyList(),
+)
+
+@Serializable
+data class AclChain(
+    val name: String = "",
+    val chainType: AclChainType = AclChainType.Forward,
+    val description: String = "",
+    val enabled: Boolean = true,
+    val rules: List<AclRule> = emptyList(),
+    val defaultAction: AclAction = AclAction.Allow,
+)
+
+@Serializable
+data class AclGroupDeclare(
+    val groupName: String = "",
+    val groupSecret: String = "",
+)
+
+@Serializable
+data class AclGroup(
+    val declares: List<AclGroupDeclare> = emptyList(),
+    val members: List<String> = emptyList(),
+)
+
+@Serializable
+data class Acl(
+    val chains: List<AclChain> = emptyList(),
+    val group: AclGroup = AclGroup(),
+)
+
+// --- Managed credentials ---------------------------------------------------
+
+@Serializable
+data class ManagedCredential(
+    val credentialId: String = "",
+    val credentialSecret: String = "",
+    val groups: List<String> = emptyList(),
+    val allowRelay: Boolean = false,
+    val allowedProxyCidrs: List<String> = emptyList(),
+    val expiryUnix: Long = 0,
+    val reusable: Boolean = true,
 )
 
 @Serializable
@@ -101,6 +220,7 @@ data class EasyTierProfile(
     val secureMode: SecureMode = SecureMode(),
     // STUN servers
     val stunServers: List<String> = emptyList(),
+    val tcpStunServers: List<String> = emptyList(),
     val stunServersV6: List<String> = emptyList(),
     // Whitelists
     val tcpWhitelist: List<String> = emptyList(),
@@ -149,6 +269,13 @@ data class EasyTierProfile(
     val instanceRecvBpsLimit: Long = Long.MAX_VALUE,
     // Optional SO_MARK (fwmark) for ROOT_TUN sockets. null = built-in default.
     val socketMark: Long? = null,
+    // Network-wide ACL (acl_v1). Shared by all nodes; not a device-local
+    // override, so it lives on the profile only.
+    val acl: Acl? = null,
+    // Declarative managed credentials (managed_credentials) and the optional
+    // credential key file (credential_file). Network-wide, profile only.
+    val managedCredentials: List<ManagedCredential> = emptyList(),
+    val credentialFile: String? = null,
 )
 
 /**
@@ -193,6 +320,7 @@ data class GlobalSettings(
     val secureMode: SecureMode? = null,
     // STUN & whitelists
     val stunServers: List<String>? = null,
+    val tcpStunServers: List<String>? = null,
     val stunServersV6: List<String>? = null,
     val tcpWhitelist: List<String>? = null,
     val udpWhitelist: List<String>? = null,
@@ -267,6 +395,7 @@ fun GlobalSettings.mergeInto(profile: EasyTierProfile): EasyTierProfile = profil
     vpnPortal = vpnPortal ?: profile.vpnPortal,
     secureMode = secureMode ?: profile.secureMode,
     stunServers = stunServers ?: profile.stunServers,
+    tcpStunServers = tcpStunServers ?: profile.tcpStunServers,
     stunServersV6 = stunServersV6 ?: profile.stunServersV6,
     tcpWhitelist = tcpWhitelist ?: profile.tcpWhitelist,
     udpWhitelist = udpWhitelist ?: profile.udpWhitelist,

@@ -45,16 +45,16 @@
 
 ## 系统要求
 
-| 项 | 值 |
-|---|---|
-| Android minSdk | 24（Android 7.0） |
-| Android targetSdk | 36 |
-| Android compileSdk | 37 |
-| ABI | `arm64-v8a` / `armeabi-v7a` / `x86_64` |
-| Gradle | 9.5.0 |
-| AGP | 9.3.1 |
-| JDK | 21（Daemon）/ 11（source/target compat） |
-| NDK | 3.22.1（仅用于编译 `root_tun_jni`） |
+| 项                  | 值                                                 |
+|--------------------|---------------------------------------------------|
+| Android minSdk     | 24（Android 7.0）                                   |
+| Android targetSdk  | 36                                                |
+| Android compileSdk | 37                                                |
+| ABI                | `arm64-v8a` / `armeabi-v7a` / `x86_64`            |
+| Gradle             | 9.5.0                                             |
+| AGP                | 9.3.1                                             |
+| JDK                | 21（Daemon）/ 11（source/target compat）              |
+| NDK                | 30.0.16138531 / CMake 4.1.2（仅用于编译 `root_tun_jni`） |
 
 Root TUN 模式需要设备已 root 并授予应用 root 权限。
 

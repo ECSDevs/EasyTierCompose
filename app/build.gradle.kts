@@ -46,6 +46,8 @@ val hasSigningCredentials: Provider<Boolean> = releaseStoreFile
 
 android {
     namespace = "cc.ptoe.easytier.compose"
+    buildToolsVersion = "37.0.0"
+    ndkVersion = "30.0.16138531"
     compileSdk {
         version = release(37) {
             minorApiLevel = 0
@@ -67,7 +69,7 @@ android {
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
+            version = "4.1.2"
         }
     }
     signingConfigs {

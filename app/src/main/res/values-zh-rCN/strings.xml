@@ -35,6 +35,12 @@
     <string name="content_delete_network">删除网络</string>
     <string name="content_edit_forward">编辑转发</string>
     <string name="content_delete_forward">删除转发</string>
+    <string name="content_edit_chain">编辑链</string>
+    <string name="content_delete_chain">删除链</string>
+    <string name="content_edit_group">编辑组</string>
+    <string name="content_delete_group">删除组</string>
+    <string name="content_edit_rule">编辑规则</string>
+    <string name="content_delete_rule">删除规则</string>
     <string name="transition_tab">标签页</string>
 
     <string name="list_new_entry">添加新条目</string>
@@ -159,7 +165,7 @@
     <string name="editor_socks5_proxy_url">SOCKS5 代理 URL</string>
     <string name="editor_vpn_portal">VPN 门户（WireGuard）</string>
     <string name="editor_enable_wireguard_portal">启用 WireGuard 门户</string>
-    <string name="editor_client_cidr">客户端 CIDR</string>
+    <string name="editor_wireguard_private_key">WireGuard 私钥</string>
     <string name="editor_wireguard_listen">WireGuard 监听地址</string>
     <string name="editor_secure_mode">安全模式</string>
     <string name="editor_enable_secure_mode">启用安全模式</string>
@@ -167,10 +173,15 @@
     <string name="editor_local_public_key">本地公钥</string>
     <string name="editor_stun_whitelists">STUN 和白名单</string>
     <string name="editor_stun_servers">STUN 服务器</string>
+    <string name="editor_stun_servers_tcp">STUN 服务器（TCP）</string>
     <string name="editor_stun_servers_ipv6">STUN 服务器（IPv6）</string>
     <string name="editor_tcp_whitelist">TCP 白名单</string>
     <string name="editor_udp_whitelist">UDP 白名单</string>
     <string name="editor_relay_network_whitelist">中继网络白名单</string>
+    <string name="editor_acl">访问控制（ACL）</string>
+    <string name="editor_managed_credentials">托管凭证</string>
+    <string name="editor_credential_file">凭证文件（路径）</string>
+    <string name="editor_credential_file_hint">可选：凭证密钥文件路径</string>
     <string name="editor_flags_general">标志 &#8212; 常规</string>
     <string name="editor_default_protocol">默认协议</string>
     <string name="editor_enable_encryption">启用加密</string>
@@ -235,14 +246,115 @@
         <item quantity="other">%1$d 个转发</item>
     </plurals>
 
+    <string name="list_vpn_portal_clients">门户客户端</string>
+    <string name="list_add_portal_client">添加门户客户端</string>
+    <string name="list_edit_portal_client">编辑门户客户端</string>
+    <string name="list_portal_client_name">客户端名称</string>
+    <string name="list_portal_client_virtual_ip">虚拟 IP</string>
+    <string name="list_portal_client_groups">组（以逗号分隔）</string>
+    <string name="list_no_portal_clients">暂无门户客户端。</string>
+    <string name="list_portal_client_summary">%1$s → %2$s</string>
+    <plurals name="portal_client_count">
+        <item quantity="other">%1$d 个客户端</item>
+    </plurals>
+
+    <string name="list_acl_chains">ACL 链</string>
+    <string name="list_add_chain">添加链</string>
+    <string name="list_edit_chain">编辑链</string>
+    <string name="list_chain_name">链名称</string>
+    <string name="list_chain_type">链类型</string>
+    <string name="list_chain_default_action">默认动作</string>
+    <string name="list_chain_description">描述</string>
+    <string name="list_chain_enabled">启用</string>
+    <string name="list_no_chains">暂无 ACL 链。</string>
+    <string name="list_chain_summary">%1$s（%2$s，%3$d 条规则）</string>
+    <plurals name="acl_chain_count">
+        <item quantity="other">%1$d 条链</item>
+    </plurals>
+
+    <string name="list_rules">规则</string>
+    <string name="list_add_rule">添加规则</string>
+    <string name="list_edit_rule">编辑规则</string>
+    <string name="list_rule_name">规则名称</string>
+    <string name="list_rule_description">描述</string>
+    <string name="list_rule_priority">优先级</string>
+    <string name="list_rule_enabled">启用</string>
+    <string name="list_rule_action">动作</string>
+    <string name="list_rule_protocol">协议</string>
+    <string name="list_rule_ports">端口</string>
+    <string name="list_rule_source_ips">源 IP</string>
+    <string name="list_rule_destination_ips">目标 IP</string>
+    <string name="list_rule_source_ports">源端口</string>
+    <string name="list_rule_source_groups">源组</string>
+    <string name="list_rule_destination_groups">目标组</string>
+    <string name="list_rule_rate_limit">速率限制（pps，0 = 不限制）</string>
+    <string name="list_rule_burst_limit">突发限制</string>
+    <string name="list_rule_stateful">有状态</string>
+    <string name="list_no_rules">暂无规则。</string>
+    <string name="list_rule_summary">%1$s（%2$s）</string>
+    <plurals name="acl_rule_count">
+        <item quantity="other">%1$d 条规则</item>
+    </plurals>
+
+    <string name="list_acl_group">ACL 组</string>
+    <string name="list_acl_group_declares">组声明</string>
+    <string name="list_add_group_declare">添加组声明</string>
+    <string name="list_edit_group_declare">编辑组声明</string>
+    <string name="list_group_name">组名称</string>
+    <string name="list_group_secret">组密钥</string>
+    <string name="list_no_group_declares">暂无组声明。</string>
+    <string name="list_group_declare_summary">%1$s</string>
+    <string name="list_acl_members">组成员</string>
+    <string name="list_no_members">暂无组成员。</string>
+    <plurals name="acl_group_declare_count">
+        <item quantity="other">%1$d 条声明</item>
+    </plurals>
+
+    <string name="list_managed_credentials">托管凭证</string>
+    <string name="list_add_credential">添加凭证</string>
+    <string name="list_edit_credential">编辑凭证</string>
+    <string name="list_credential_id">凭证 ID</string>
+    <string name="list_credential_secret">凭证密钥</string>
+    <string name="list_credential_groups">组（以逗号分隔）</string>
+    <string name="list_credential_allow_relay">允许中继</string>
+    <string name="list_credential_allowed_proxy_cidrs">允许的代理 CIDR</string>
+    <string name="list_credential_expiry">到期时间（Unix 秒）</string>
+    <string name="list_credential_reusable">可复用</string>
+    <string name="list_no_managed_credentials">暂无托管凭证。</string>
+    <string name="list_credential_summary">%1$s（到期 %2$d）</string>
+    <plurals name="managed_credential_count">
+        <item quantity="other">%1$d 个凭证</item>
+    </plurals>
+
+    <string name="choice_chain_inbound">入站</string>
+    <string name="choice_chain_outbound">出站</string>
+    <string name="choice_chain_forward">转发</string>
+    <string name="choice_action_allow">允许</string>
+    <string name="choice_action_drop">丢弃</string>
+    <string name="choice_protocol_tcp">TCP</string>
+    <string name="choice_protocol_udp">UDP</string>
+    <string name="choice_protocol_icmp">ICMP</string>
+    <string name="choice_protocol_icmpv6">ICMPv6</string>
+    <string name="choice_protocol_any">任意</string>
+
     <string name="error_profile_name_required">必须填写配置文件名称</string>
     <string name="error_network_name_required">必须填写网络名称</string>
     <string name="error_tld_dns_zone_required">必须填写 TLD DNS 区域</string>
     <string name="error_ipv4_cidr_required_dhcp_off">关闭 DHCP 时必须填写有效的 IPv4 CIDR</string>
     <string name="error_invalid_ipv6_cidr">IPv6 CIDR 无效</string>
-    <string name="error_invalid_client_cidr">客户端 CIDR 无效</string>
-    <string name="error_portal_cidr_not_routable">客户端 CIDR 必须是可路由子网（不能是回环、链路本地或组播地址，前缀为 8-28）</string>
     <string name="error_invalid_wireguard_listen">WireGuard 监听地址无效</string>
+    <string name="error_portal_client_name_required">每个门户客户端都需要名称</string>
+    <string name="error_portal_client_invalid_ip">每个门户客户端都需要有效的 IPv4 地址</string>
+    <string name="error_portal_client_duplicate_name">门户客户端名称必须唯一</string>
+    <string name="error_portal_client_duplicate_ip">门户客户端 IP 必须唯一</string>
+    <string name="error_acl_chain_name_required">每个 ACL 链都需要名称</string>
+    <string name="error_acl_rule_name_required">每个 ACL 规则都需要名称</string>
+    <string name="error_acl_group_name_required">每个 ACL 组声明都需要组名称</string>
+    <string name="error_acl_group_duplicate">ACL 组名称必须唯一</string>
+    <string name="error_credential_id_required">凭证 ID 为必填项</string>
+    <string name="error_credential_secret_required">凭证密钥为必填项</string>
+    <string name="error_credential_expiry">凭证到期时间必须是未来的 Unix 时间戳</string>
+    <string name="error_credential_proxy_cidrs_invalid">一个或多个允许的代理 CIDR 无效</string>
     <string name="error_invalid_socks5_proxy">SOCKS5 代理 URL 无效（应为 socks5://主机:端口）</string>
     <string name="error_socket_mark_range">Socket 标记必须在 0 到 4294967295 之间</string>
     <string name="error_mtu_range">MTU 必须在 576 到 9000 之间</string>

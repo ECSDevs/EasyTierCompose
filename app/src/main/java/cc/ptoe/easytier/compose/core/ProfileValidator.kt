@@ -3,8 +3,10 @@ package cc.ptoe.easytier.compose.core
 import android.content.Context
 import androidx.annotation.StringRes
 import cc.ptoe.easytier.compose.R
+import cc.ptoe.easytier.compose.data.Acl
 import cc.ptoe.easytier.compose.data.EasyTierProfile
 import cc.ptoe.easytier.compose.data.GlobalSettings
+import cc.ptoe.easytier.compose.data.ManagedCredential
 import cc.ptoe.easytier.compose.data.mergeInto
 import java.net.InetAddress
 
@@ -44,6 +46,7 @@ class ProfileValidator(private val nativeParser: NativeConfigParser = EasyTierNa
         validateStringList("manualRoutes", effective.manualRoutes) { it.isValidIpv4Cidr() }
         validateStringList("exitNodes", effective.exitNodes) { it.isValidIp() }
         validateStringList("stunServers", effective.stunServers)
+        validateStringList("tcpStunServers", effective.tcpStunServers)
         validateStringList("stunServersV6", effective.stunServersV6)
         validateStringList("tcpWhitelist", effective.tcpWhitelist)
         validateStringList("udpWhitelist", effective.udpWhitelist)
@@ -51,15 +54,38 @@ class ProfileValidator(private val nativeParser: NativeConfigParser = EasyTierNa
         validateProxyNetworks(effective)
         validatePortForwards(effective)
         effective.vpnPortal?.let { portal ->
-            when {
-                !portal.clientCidr.isValidIpv4Cidr() -> put("vpnPortal", ValidationMessage.Resource(R.string.error_invalid_client_cidr))
-                !portal.clientCidr.isRoutablePortalCidr() -> put(
-                    "vpnPortal",
-                    ValidationMessage.Resource(R.string.error_portal_cidr_not_routable),
-                )
-            }
             if (!portal.wireguardListen.isValidSocketAddr()) put("vpnPortal", ValidationMessage.Resource(R.string.error_invalid_wireguard_listen))
+            val clientNames = mutableSetOf<String>()
+            val clientIps = mutableSetOf<String>()
+            portal.clients.forEach { client ->
+                val name = client.name.trim()
+                when {
+                    name.isEmpty() -> put(
+                        "vpnPortal",
+                        ValidationMessage.Resource(R.string.error_portal_client_name_required)
+                    )
+
+                    !clientNames.add(name) -> put(
+                        "vpnPortal",
+                        ValidationMessage.Resource(R.string.error_portal_client_duplicate_name)
+                    )
+                }
+                val ip = client.virtualIp.trim()
+                when {
+                    !ip.isValidIpv4Host() -> put(
+                        "vpnPortal",
+                        ValidationMessage.Resource(R.string.error_portal_client_invalid_ip)
+                    )
+
+                    !clientIps.add(ip) -> put(
+                        "vpnPortal",
+                        ValidationMessage.Resource(R.string.error_portal_client_duplicate_ip)
+                    )
+                }
+            }
         }
+        validateAcl(effective.acl)
+        validateManagedCredentials(effective.managedCredentials)
         effective.socks5Proxy?.takeIf { it.isNotBlank() }?.let {
             if (!it.isValidSocks5Proxy()) put("socks5Proxy", ValidationMessage.Resource(R.string.error_invalid_socks5_proxy))
         }
@@ -143,6 +169,46 @@ class ProfileValidator(private val nativeParser: NativeConfigParser = EasyTierNa
             put("portForwards", ValidationMessage.Resource(R.string.error_port_forward_protocol))
         }
     }
+
+    private fun MutableMap<String, ValidationMessage>.validateAcl(acl: Acl?) {
+        if (acl == null) return
+        if (acl.chains.any { it.name.isBlank() }) {
+            put("acl", ValidationMessage.Resource(R.string.error_acl_chain_name_required))
+        }
+        if (acl.chains.any { chain -> chain.rules.any { it.name.isBlank() } }) {
+            put("acl", ValidationMessage.Resource(R.string.error_acl_rule_name_required))
+        }
+        if (acl.group.declares.any { it.groupName.isBlank() }) {
+            put("acl", ValidationMessage.Resource(R.string.error_acl_group_name_required))
+        }
+        val groupNames = acl.group.declares.map { it.groupName.trim() }.filter(String::isNotEmpty)
+        if (groupNames.size != groupNames.toSet().size) {
+            put("acl", ValidationMessage.Resource(R.string.error_acl_group_duplicate))
+        }
+    }
+
+    private fun MutableMap<String, ValidationMessage>.validateManagedCredentials(credentials: List<ManagedCredential>) {
+        credentials.forEach { credential ->
+            if (credential.credentialId.isBlank()) put(
+                "managedCredentials",
+                ValidationMessage.Resource(R.string.error_credential_id_required)
+            )
+            if (credential.credentialSecret.isBlank()) put(
+                "managedCredentials",
+                ValidationMessage.Resource(R.string.error_credential_secret_required)
+            )
+            if (credential.expiryUnix <= 0) put(
+                "managedCredentials",
+                ValidationMessage.Resource(R.string.error_credential_expiry)
+            )
+            if (credential.allowedProxyCidrs.any { !it.trim().isValidIpv4Cidr() }) {
+                put(
+                    "managedCredentials",
+                    ValidationMessage.Resource(R.string.error_credential_proxy_cidrs_invalid)
+                )
+            }
+        }
+    }
 }
 
 private fun String?.isValidIpv4Cidr(): Boolean {
@@ -157,29 +223,16 @@ private fun String?.isValidIpv4Cidr(): Boolean {
 }
 
 /**
- * The portal client CIDR is advertised to every peer as a reachable network
- * and becomes the source address of portal client traffic. Local-only ranges
- * (0.0.0.0/8, loopback 127/8, link-local 169.254/16, multicast 224/4 and
- * 255/8) would make return packets get swallowed by peers' local routing
- * tables, so they are rejected. The prefix must also leave room for client
- * addresses.
+ * A bare IPv4 host address (no CIDR prefix). Used for VPN portal client
+ * virtual IPs, which the core parses as `std::net::Ipv4Addr`.
  */
-private fun String?.isRoutablePortalCidr(): Boolean {
+private fun String?.isValidIpv4Host(): Boolean {
     val value = this?.trim().orEmpty()
-    val parts = value.split('/', limit = 2)
-    val prefix = parts.getOrNull(1)?.toIntOrNull() ?: return false
-    if (prefix !in 8..28) return false
-    val bytes = runCatching { InetAddress.getByName(parts[0]).address }.getOrNull() ?: return false
-    if (bytes.size != 4) return false
-    val first = bytes[0].toInt() and 0xFF
-    val second = bytes[1].toInt() and 0xFF
-    return when {
-        first == 0 -> false                    // 0.0.0.0/8
-        first == 127 -> false                  // loopback
-        first == 169 && second == 254 -> false // link-local
-        first >= 224 -> false                  // multicast + reserved (incl. broadcast)
-        else -> true
-    }
+    if (value.isEmpty() || value.contains('/')) return false
+    return runCatching {
+        val address = InetAddress.getByName(value)
+        address.address.size == 4 && address.hostAddress == value
+    }.getOrDefault(false)
 }
 
 private fun String?.isValidIpv6Cidr(): Boolean {

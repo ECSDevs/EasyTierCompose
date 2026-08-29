@@ -41,6 +41,7 @@ import cc.ptoe.easytier.compose.ui.components.PortForwardListField
 import cc.ptoe.easytier.compose.ui.components.ProxyNetworkListField
 import cc.ptoe.easytier.compose.ui.components.SettingsGroup
 import cc.ptoe.easytier.compose.ui.components.SwitchRow
+import cc.ptoe.easytier.compose.ui.components.VpnPortalClientListField
 
 /**
  * Global overrides editor. Mirrors the profile editor's sections so every
@@ -171,15 +172,39 @@ internal fun GlobalSettingsScreen(
                     val portal = settings.vpnPortal
                     OverrideItem(
                         label = stringResource(R.string.editor_vpn_portal),
-                        profileSummary = profile.vpnPortal?.let { profileSummary(it.clientCidr) } ?: profileSummary(stringResource(R.string.global_value_not_set)),
+                        profileSummary = profile.vpnPortal?.let { profileSummary(it.wireguardListen) }
+                            ?: profileSummary(stringResource(R.string.global_value_not_set)),
                         overridden = portal != null,
                         onOverrideChange = { on ->
                             onGlobalSettings(settings.copy(vpnPortal = if (on) profile.vpnPortal ?: VpnPortal.generateDefault() else null))
                         },
                     ) {
                         if (portal != null) {
-                            FormField(stringResource(R.string.editor_client_cidr), portal.clientCidr, null) { v -> onGlobalSettings(settings.copy(vpnPortal = portal.copy(clientCidr = v))) }
                             FormField(stringResource(R.string.editor_wireguard_listen), portal.wireguardListen, null) { v -> onGlobalSettings(settings.copy(vpnPortal = portal.copy(wireguardListen = v))) }
+                            FormField(
+                                stringResource(R.string.editor_wireguard_private_key),
+                                portal.wireguardPrivateKey.orEmpty(),
+                                null
+                            ) { v ->
+                                onGlobalSettings(
+                                    settings.copy(
+                                        vpnPortal = portal.copy(
+                                            wireguardPrivateKey = v.ifBlank { null })
+                                    )
+                                )
+                            }
+                            VpnPortalClientListField(
+                                portal.clients,
+                                null
+                            ) { clients ->
+                                onGlobalSettings(
+                                    settings.copy(
+                                        vpnPortal = portal.copy(
+                                            clients = clients
+                                        )
+                                    )
+                                )
+                            }
                         }
                     }
                 }
@@ -212,6 +237,11 @@ internal fun GlobalSettingsScreen(
                 Column(Modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     SectionHeader(stringResource(R.string.editor_stun_whitelists))
                     OverrideListField(stringResource(R.string.editor_stun_servers), profile.stunServers, settings.stunServers) { onGlobalSettings(settings.copy(stunServers = it)) }
+                    OverrideListField(
+                        stringResource(R.string.editor_stun_servers_tcp),
+                        profile.tcpStunServers,
+                        settings.tcpStunServers
+                    ) { onGlobalSettings(settings.copy(tcpStunServers = it)) }
                     OverrideListField(stringResource(R.string.editor_stun_servers_ipv6), profile.stunServersV6, settings.stunServersV6) { onGlobalSettings(settings.copy(stunServersV6 = it)) }
                     OverrideListField(stringResource(R.string.editor_tcp_whitelist), profile.tcpWhitelist, settings.tcpWhitelist) { onGlobalSettings(settings.copy(tcpWhitelist = it)) }
                     OverrideListField(stringResource(R.string.editor_udp_whitelist), profile.udpWhitelist, settings.udpWhitelist) { onGlobalSettings(settings.copy(udpWhitelist = it)) }
@@ -377,7 +407,11 @@ private fun OverrideItem(
         Row(
             Modifier
                 .fillMaxWidth()
-                .toggleable(value = overridden, role = Role.Switch, onValueChange = onOverrideChange),
+                .toggleable(
+                    value = overridden,
+                    role = Role.Switch,
+                    onValueChange = onOverrideChange
+                ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {

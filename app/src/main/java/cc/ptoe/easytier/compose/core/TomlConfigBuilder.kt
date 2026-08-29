@@ -5,7 +5,6 @@ import cc.ptoe.easytier.compose.data.GlobalSettings
 import cc.ptoe.easytier.compose.data.TunMode
 import cc.ptoe.easytier.compose.data.mergeInto
 import cc.ptoe.easytier.compose.transport.root.RootTunSpec
-import java.net.InetAddress
 
 object TomlConfigBuilder {
     /**
@@ -38,6 +37,7 @@ object TomlConfigBuilder {
             appendTomlArray("exit_nodes", p.exitNodes)
             appendTomlArray("routes", p.manualRoutes)
             appendTomlArray("stun_servers", p.stunServers)
+            appendTomlArray("tcp_stun_servers", p.tcpStunServers)
             appendTomlArray("stun_servers_v6", p.stunServersV6)
             appendTomlArray("tcp_whitelist", p.tcpWhitelist)
             appendTomlArray("udp_whitelist", p.udpWhitelist)
@@ -76,8 +76,98 @@ object TomlConfigBuilder {
 
             p.vpnPortal?.let { portal ->
                 append("\n[vpn_portal_config]\n")
-                appendTomlString("client_cidr", portal.clientCidr.trim())
                 appendTomlString("wireguard_listen", portal.wireguardListen.trim())
+                portal.wireguardPrivateKey?.trim()?.takeIf { it.isNotEmpty() }
+                    ?.let { appendTomlString("wireguard_private_key", it) }
+                portal.clients.forEach { client ->
+                    val name = client.name.trim()
+                    if (name.isEmpty()) return@forEach
+                    append("\n[[vpn_portal_config.clients]]\n")
+                    appendTomlString("name", name)
+                    appendTomlString("virtual_ip", client.virtualIp.trim())
+                    if (client.groups.isNotEmpty()) {
+                        appendTomlArray("groups", client.groups)
+                    }
+                }
+            }
+
+            p.acl?.let { acl ->
+                append("\n[acl.acl_v1]\n")
+                acl.chains.forEach { chain ->
+                    append("\n[[acl.acl_v1.chains]]\n")
+                    appendTomlString("name", chain.name.trim())
+                    append("chain_type = ${chain.chainType.value}\n")
+                    chain.description.trim().takeIf { it.isNotEmpty() }
+                        ?.let { appendTomlString("description", it) }
+                    append("enabled = ${chain.enabled}\n")
+                    append("default_action = ${chain.defaultAction.value}\n")
+                    chain.rules.forEach { rule ->
+                        val ruleName = rule.name.trim()
+                        if (ruleName.isEmpty()) return@forEach
+                        append("\n[[acl.acl_v1.chains.rules]]\n")
+                        appendTomlString("name", ruleName)
+                        rule.description.trim().takeIf { it.isNotEmpty() }
+                            ?.let { appendTomlString("description", it) }
+                        append("priority = ${rule.priority}\n")
+                        append("enabled = ${rule.enabled}\n")
+                        append("protocol = ${rule.protocol.value}\n")
+                        if (rule.ports.isNotEmpty()) appendTomlArray("ports", rule.ports)
+                        if (rule.sourceIps.isNotEmpty()) appendTomlArray(
+                            "source_ips",
+                            rule.sourceIps
+                        )
+                        if (rule.destinationIps.isNotEmpty()) appendTomlArray(
+                            "destination_ips",
+                            rule.destinationIps
+                        )
+                        if (rule.sourcePorts.isNotEmpty()) appendTomlArray(
+                            "source_ports",
+                            rule.sourcePorts
+                        )
+                        append("action = ${rule.action.value}\n")
+                        if (rule.rateLimit > 0) append("rate_limit = ${rule.rateLimit}\n")
+                        if (rule.burstLimit > 0) append("burst_limit = ${rule.burstLimit}\n")
+                        if (rule.stateful) append("stateful = true\n")
+                        if (rule.sourceGroups.isNotEmpty()) appendTomlArray(
+                            "source_groups",
+                            rule.sourceGroups
+                        )
+                        if (rule.destinationGroups.isNotEmpty()) appendTomlArray(
+                            "destination_groups",
+                            rule.destinationGroups
+                        )
+                    }
+                }
+                if (acl.group.declares.isNotEmpty() || acl.group.members.isNotEmpty()) {
+                    append("\n[acl.acl_v1.group]\n")
+                    if (acl.group.members.isNotEmpty()) appendTomlArray(
+                        "members",
+                        acl.group.members
+                    )
+                    acl.group.declares.forEach { declare ->
+                        append("\n[[acl.acl_v1.group.declares]]\n")
+                        appendTomlString("group_name", declare.groupName.trim())
+                        appendTomlString("group_secret", declare.groupSecret)
+                    }
+                }
+            }
+
+            p.credentialFile?.trim()?.takeIf { it.isNotEmpty() }
+                ?.let { appendTomlString("credential_file", it) }
+            p.managedCredentials.forEach { credential ->
+                val id = credential.credentialId.trim()
+                if (id.isEmpty()) return@forEach
+                append("\n[[managed_credentials]]\n")
+                appendTomlString("credential_id", id)
+                appendTomlString("credential_secret", credential.credentialSecret)
+                if (credential.groups.isNotEmpty()) appendTomlArray("groups", credential.groups)
+                if (credential.allowRelay) append("allow_relay = true\n")
+                if (credential.allowedProxyCidrs.isNotEmpty()) appendTomlArray(
+                    "allowed_proxy_cidrs",
+                    credential.allowedProxyCidrs
+                )
+                append("expiry_unix = ${credential.expiryUnix}\n")
+                append("reusable = ${credential.reusable}\n")
             }
 
             if (p.secureMode.enabled) {

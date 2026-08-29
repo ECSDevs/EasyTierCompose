@@ -34,15 +34,18 @@ import cc.ptoe.easytier.compose.data.CompressionAlgo
 import cc.ptoe.easytier.compose.data.EasyTierProfile
 import cc.ptoe.easytier.compose.data.EncryptionAlgorithm
 import cc.ptoe.easytier.compose.data.VpnPortal
+import cc.ptoe.easytier.compose.ui.components.AclField
 import cc.ptoe.easytier.compose.ui.components.ChoiceOption
 import cc.ptoe.easytier.compose.ui.components.ChoiceRow
 import cc.ptoe.easytier.compose.ui.components.FormField
 import cc.ptoe.easytier.compose.ui.components.ListField
+import cc.ptoe.easytier.compose.ui.components.ManagedCredentialListField
 import cc.ptoe.easytier.compose.ui.components.PeerListField
 import cc.ptoe.easytier.compose.ui.components.PortForwardListField
 import cc.ptoe.easytier.compose.ui.components.ProxyNetworkListField
 import cc.ptoe.easytier.compose.ui.components.SectionCard
 import cc.ptoe.easytier.compose.ui.components.SwitchRow
+import cc.ptoe.easytier.compose.ui.components.VpnPortalClientListField
 
 @Composable
 internal fun ProfileEditorScreen(
@@ -156,8 +159,16 @@ internal fun ProfileEditorScreen(
                     update { it.copy(vpnPortal = if (checked) VpnPortal.generateDefault() else null) }
                 }
                 if (portal != null) {
-                    FormField(stringResource(R.string.editor_client_cidr), portal.clientCidr, error("vpnPortal")) { v -> update { it.copy(vpnPortal = portal.copy(clientCidr = v)) } }
                     FormField(stringResource(R.string.editor_wireguard_listen), portal.wireguardListen, error("vpnPortal")) { v -> update { it.copy(vpnPortal = portal.copy(wireguardListen = v)) } }
+                    FormField(
+                        stringResource(R.string.editor_wireguard_private_key),
+                        portal.wireguardPrivateKey.orEmpty(),
+                        error("vpnPortal")
+                    ) { v -> update { it.copy(vpnPortal = portal.copy(wireguardPrivateKey = v.ifBlank { null })) } }
+                    VpnPortalClientListField(
+                        portal.clients,
+                        error("vpnPortal")
+                    ) { clients -> update { it.copy(vpnPortal = portal.copy(clients = clients)) } }
                 }
             }
         }
@@ -175,10 +186,43 @@ internal fun ProfileEditorScreen(
         item {
             SectionCard(title = stringResource(R.string.editor_stun_whitelists), icon = Icons.Default.Router) {
                 ListField(stringResource(R.string.editor_stun_servers), profile.stunServers, error("stunServers")) { v -> update { it.copy(stunServers = v) } }
+                ListField(
+                    stringResource(R.string.editor_stun_servers_tcp),
+                    profile.tcpStunServers,
+                    error("tcpStunServers")
+                ) { v -> update { it.copy(tcpStunServers = v) } }
                 ListField(stringResource(R.string.editor_stun_servers_ipv6), profile.stunServersV6, error("stunServersV6")) { v -> update { it.copy(stunServersV6 = v) } }
                 ListField(stringResource(R.string.editor_tcp_whitelist), profile.tcpWhitelist, error("tcpWhitelist")) { v -> update { it.copy(tcpWhitelist = v) } }
                 ListField(stringResource(R.string.editor_udp_whitelist), profile.udpWhitelist, error("udpWhitelist")) { v -> update { it.copy(udpWhitelist = v) } }
                 FormField(stringResource(R.string.editor_relay_network_whitelist), profile.relayNetworkWhitelist, null) { v -> update { it.copy(relayNetworkWhitelist = v) } }
+            }
+        }
+
+        item {
+            SectionCard(title = stringResource(R.string.editor_acl), icon = Icons.Default.Router) {
+                AclField(profile.acl, error("acl")) { acl -> update { it.copy(acl = acl) } }
+            }
+        }
+
+        item {
+            SectionCard(
+                title = stringResource(R.string.editor_managed_credentials),
+                icon = Icons.Default.VpnKey
+            ) {
+                ManagedCredentialListField(
+                    profile.managedCredentials,
+                    error("managedCredentials")
+                ) { credentials -> update { it.copy(managedCredentials = credentials) } }
+                FormField(
+                    stringResource(R.string.editor_credential_file),
+                    profile.credentialFile.orEmpty(),
+                    null
+                ) { v -> update { it.copy(credentialFile = v.ifBlank { null }) } }
+                Text(
+                    stringResource(R.string.editor_credential_file_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
 
