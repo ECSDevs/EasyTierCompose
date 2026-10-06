@@ -9,6 +9,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -20,6 +21,14 @@ data class NetworkInfo(
     val peers: List<RuntimePeer>,
     val hostname: String?,
     val natType: String?,
+    /**
+     * Core-side liveness from NetworkInstanceRunningInfo.running (proto3 bool).
+     * pbjson omits the field when false, so `null` means either "absent from the
+     * JSON" or "the whole entry was missing" — both must be treated as not
+     * running by the poll loops. A legacy .so that predates the field also maps
+     * to null; callers decide whether that is fatal.
+     */
+    val running: Boolean?,
 )
 
 /** Parses the JSON returned by [EasyTierJni.collectNetworkInfos] for a specific profile instance. */
@@ -27,6 +36,7 @@ fun String.networkInfo(profileId: String): NetworkInfo? = runCatching {
     val map = Json.parseToJsonElement(this).jsonObject["map"]?.jsonObject ?: return null
     val info = map[profileId]?.jsonObject ?: return null
     val error = info["error_msg"]?.jsonPrimitive?.content
+    val running = info["running"]?.jsonPrimitive?.booleanOrNull
     val myNode = info["my_node_info"]?.jsonObject
     val virtual = myNode?.get("virtual_ipv4")?.jsonObject?.let(::ipv4InetToCidr)
     val hostname = myNode?.get("hostname")?.jsonPrimitive?.content?.takeIf(String::isNotBlank)
@@ -42,7 +52,7 @@ fun String.networkInfo(profileId: String): NetworkInfo? = runCatching {
         } ?: emptyList()
     }?.distinct()?.sorted() ?: emptyList()
     val peers = info["peer_route_pairs"]?.jsonArray?.mapNotNull { it.peerRoutePair() }.orEmpty()
-    NetworkInfo(virtual, routes, error, peers, hostname, natType)
+    NetworkInfo(virtual, routes, error, peers, hostname, natType, running)
 }.getOrNull()
 
 // peer_route_pairs entries combine a Route (hostname, ipv4, cost, latency, NAT) with a Peer

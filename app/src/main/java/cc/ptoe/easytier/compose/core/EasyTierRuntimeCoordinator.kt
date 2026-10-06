@@ -2,6 +2,7 @@ package cc.ptoe.easytier.compose.core
 import androidx.annotation.StringRes
 
 import android.content.Context
+import android.util.Log
 import cc.ptoe.easytier.compose.data.EasyTierProfile
 import cc.ptoe.easytier.compose.R
 import cc.ptoe.easytier.compose.data.GlobalSettings
@@ -52,6 +53,8 @@ class EasyTierRuntimeCoordinator private constructor(
     }
 
     companion object {
+        private const val TAG = "EasyTierCoordinator"
+
         // Process-wide singleton: BootCompletedReceiver and MainActivity must share one
         // coordinator. Two instances would each run their own poll loops and transports
         // against the same global native instance / root daemon, so a stop() from the
@@ -279,8 +282,22 @@ class EasyTierRuntimeCoordinator private constructor(
         pollJob?.cancel()
         val profile = activeProfile ?: return
         pollJob = scope.launch {
+            val exitDetector = CoreExitDetector()
             while (mutableStatus.value.state in setOf(RuntimeState.STARTING, RuntimeState.RUNNING)) {
-                runCatching { EasyTierJni.collectNetworkInfos(1)?.networkInfo(profile.id) }.getOrNull()?.let { info ->
+                // A null collect result (JNI threw) feeds the exit detector too:
+                // silently skipping it previously left the VPN up forever when the
+                // core was gone.
+                val info = runCatching { EasyTierJni.collectNetworkInfos(1)?.networkInfo(profile.id) }
+                    .onFailure { Log.w(TAG, "collectNetworkInfos failed: ${it.message}") }
+                    .getOrNull()
+                if (exitDetector.onPoll(info)) {
+                    Log.w(TAG, "core for profile ${profile.id} is gone; tearing down VPN")
+                    failure(profile, context.getString(R.string.error_core_stopped))
+                    vpn.stop()
+                    runCatching { EasyTierJni.retainNetworkInstance(null) }
+                    return@launch
+                }
+                if (info != null) {
                     if (!info.error.isNullOrBlank()) {
                         failure(profile, info.error)
                         vpn.stop()
@@ -325,24 +342,29 @@ class EasyTierRuntimeCoordinator private constructor(
         pollJob?.cancel()
         val profile = activeProfile ?: return
         pollJob = scope.launch {
+            val exitDetector = CoreExitDetector()
             while (mutableStatus.value.state in setOf(RuntimeState.STARTING, RuntimeState.RUNNING)) {
-                runCatching { EasyTierJni.collectNetworkInfos(1)?.networkInfo(profile.id) }.getOrNull()?.let { info ->
-                    if (!info.error.isNullOrBlank()) {
-                        failure(profile, info.error)
-                        EasyTierJni.retainNetworkInstance(null)
-                        return@launch
-                    }
-                    // No TUN to establish: just surface runtime metadata for the UI.
-                    // EasyTier still assigns a virtual IPv4 even without a TUN device,
-                    // so propagate it (the poll only sets it when resolved, preserving
-                    // the previous value when collectNetworkInfos returns null).
-                    info.virtualIpv4?.let { ipv4 ->
+                val info = runCatching { EasyTierJni.collectNetworkInfos(1)?.networkInfo(profile.id) }
+                    .onFailure { Log.w(TAG, "collectNetworkInfos failed: ${it.message}") }
+                    .getOrNull()
+                if (exitDetector.onPoll(info)) {
+                    Log.w(TAG, "core for profile ${profile.id} is gone; clearing no-tun session")
+                    failure(profile, context.getString(R.string.error_core_stopped))
+                    runCatching { EasyTierJni.retainNetworkInstance(null) }
+                    return@launch
+                }
+                // No TUN to establish: just surface runtime metadata for the UI.
+                // EasyTier still assigns a virtual IPv4 even without a TUN device,
+                // so propagate it (the poll only sets it when resolved, preserving
+                // the previous value when collectNetworkInfos returns null).
+                info?.let {
+                    it.virtualIpv4?.let { ipv4 ->
                         mutableStatus.value = mutableStatus.value.copy(virtualIpv4 = ipv4)
                     }
                     mutableStatus.value = mutableStatus.value.copy(
-                        peers = info.peers,
-                        hostname = info.hostname,
-                        natType = info.natType,
+                        peers = it.peers,
+                        hostname = it.hostname,
+                        natType = it.natType,
                     )
                     refreshWireGuardPortal(profile)
                 }

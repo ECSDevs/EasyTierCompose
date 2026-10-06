@@ -428,6 +428,7 @@
     <string name="error_root_helper_disconnected">Root helper disconnected</string>
     <string name="error_root_helper_start_timed_out">Root helper start timed out</string>
     <string name="error_vpn_permission_denied">VPN permission denied</string>
+    <string name="error_core_stopped">EasyTier core exited unexpectedly</string>
     <string name="vpn_device_name">Android VPN</string>
     <string name="vpn_session_name">EasyTier</string>
     <string name="vpn_notification_title">EasyTier VPN active</string>
